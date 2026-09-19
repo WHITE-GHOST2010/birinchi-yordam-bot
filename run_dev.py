@@ -50,10 +50,9 @@ try:
         print(f"{colors.WARNING}Agar hozir ishlamasa, kompyuterni qayta yuklang yoki fondagi python.exe jarayonlarini yoping.{colors.ENDC}\n")
     
     print(f"{colors.BLUE}Veb-server ishga tushirilmoqda (127.0.0.1:8000)...{colors.ENDC}")
-    app_dir = os.path.join(os.path.dirname(__file__), "app")
+    app_server_path = os.path.join(os.path.dirname(__file__), "app_server.py")
     web_server = subprocess.Popen(
-        [sys.executable, "-m", "http.server", "8000"],
-        cwd=app_dir,
+        [sys.executable, app_server_path],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True
@@ -70,39 +69,71 @@ try:
 
     # 2. Cloudflare tunnelini ishga tushirib, havolani o'qiymiz
     print(f"{colors.BLUE}2. Cloudflare tunneli yoqilmoqda (havola olinmoqda)...{colors.ENDC}")
-    # Windowsda localhost o'rniga 127.0.0.1 ishlatamiz (IPv6 muammosini oldini olish uchun)
+
+    # cloudflared ni aniqlash: avval to'g'ridan-to'g'ri, keyin npx orqali
+    import shutil
+    cf_cmd = shutil.which("cloudflared")
+    if cf_cmd:
+        tunnel_cmd = [cf_cmd, "tunnel", "--url", "http://127.0.0.1:8000"]
+        print(f"{colors.BLUE}   cloudflared topildi: {cf_cmd}{colors.ENDC}")
+    else:
+        tunnel_cmd = ["npx", "-y", "cloudflared", "tunnel", "--url", "http://127.0.0.1:8000"]
+        print(f"{colors.BLUE}   cloudflared topilmadi, npx orqali yuklanmoqda...{colors.ENDC}")
+
     tunnel = subprocess.Popen(
-        ["npx", "-y", "cloudflared", "tunnel", "--url", "http://127.0.0.1:8000"],
+        tunnel_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        shell=True
+        encoding="utf-8",
+        errors="replace",
+        shell=False
     )
     processes.append(tunnel)
 
     # Havolani aniqlash (re orqali .trycloudflare.com ni qidiramiz)
     mini_app_url = None
     start_time = time.time()
-    
+    timeout = 90  # 90 soniya (npx yuklab olishga vaqt kerak)
+
     while True:
-        if time.time() - start_time > 30: # 30 soniya kutish
-            print(f"{colors.FAIL}❌ Cloudflare havolasini olib bo'lmadi (vaqt tugadi).{colors.ENDC}")
-            cleanup()
-            
-        line = tunnel.stdout.readline()
+        elapsed = time.time() - start_time
+        if elapsed > timeout:
+            print(f"{colors.FAIL}❌ Cloudflare havolasini olib bo'lmadi ({timeout}s vaqt tugadi).{colors.ENDC}")
+            break
+
+        if tunnel.poll() is not None:
+            print(f"{colors.FAIL}❌ Cloudflare jarayoni kutilmagan holda tugadi.{colors.ENDC}")
+            break
+
+        try:
+            line = tunnel.stdout.readline()
+        except Exception:
+            time.sleep(0.2)
+            continue
+
         if not line:
-            break
-            
-        # Havolani qidirish
-        match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
-        if match:
-            mini_app_url = match.group(0)
-            print(f"{colors.GREEN}✅ Yangi havola olindi: {colors.BOLD}{mini_app_url}{colors.ENDC}")
-            break
+            time.sleep(0.1)
+            continue
+
+        line = line.strip()
+        if line:
+            # Havolani qidirish (trycloudflare.com yoki har qanday cloudflare URL)
+            match = re.search(r'https://[a-zA-Z0-9._-]+\.trycloudflare\.com', line)
+            if not match:
+                match = re.search(r'https://[a-zA-Z0-9-]+\.trycloudflare\.com', line)
+            if match and "api.trycloudflare.com" not in match.group(0):
+                mini_app_url = match.group(0)
+                print(f"{colors.GREEN}✅ Yangi havola olindi: {colors.BOLD}{mini_app_url}{colors.ENDC}")
+                break
+            # Foydali xabarlarni chiqaramiz
+            if any(k in line.lower() for k in ["error", "failed", "fatal", "xato"]):
+                print(f"{colors.WARNING}   ⚠ {line}{colors.ENDC}")
 
     if not mini_app_url:
         print(f"{colors.FAIL}❌ Havola topilmadi.{colors.ENDC}")
         cleanup()
+
 
     # 3. .env faylini avtomatik yangilash
     print(f"{colors.BLUE}3. .env fayliga yangi havola yozilmoqda...{colors.ENDC}")

@@ -1,0 +1,369 @@
+{
+  "head": {
+    "title": "🧠 Bosh",
+    "icon": "🧠",
+    "color": "#8b5cf6",
+    "diseases": [
+      {
+        "name": "Bosh og'rig'i",
+        "tip": "Dam olish, yetarli suv ichish va ekran vaqtini kamaytirish yordam berishi mumkin.",
+        "desc": "Pulsatsiyalanuvchi yoki bosuvchi og'riq, ko'pincha stress, uyquning kamligi yoki suyuqlik yetishmasligi sabab.",
+        "urgent": false
+      },
+      {
+        "name": "Migren",
+        "tip": "Tinch va qorong'i xonada dam olish, ko'z ustiga sovuq mato qo'yish foydali bo'lishi mumkin.",
+        "desc": "Bir tomonlama kuchli pulsatsiyalanuvchi og'riq, yorug'lik va shovqinga ta'sirchanlik, ko'ngil aynishi.",
+        "urgent": false
+      },
+      {
+        "name": "Bosh aylanishi (Vertigo)",
+        "tip": "To'xtab o'tiring, keskin harakat qilmang. Suv iching va dam oling.",
+        "desc": "Atrof-muhit aylanayotgandek tuyulishi, muvozanat yo'qolishi, ko'ngil aynishi bilan birga kelishi mumkin.",
+        "urgent": false
+      },
+      {
+        "name": "Insult belgilari",
+        "tip": "Zudlik bilan 103 ga qo'ng'iroq qiling! Har daqiqa muhim.",
+        "desc": "Yuz qiyshayishi, bir tomonlama qo'l/oyoq kuchsizlanishi, nutq buzilishi, kuchli to'satdan bosh og'rig'i.",
+        "urgent": true
+      },
+      {
+        "name": "Yuqori qon bosimi (Gipertoniya)",
+        "tip": "Tuzni kamaytiring, stress boshqaruvi, muntazam harakatlanish. Shifokor bilan maslahatlashing.",
+        "desc": "Ensa qismida og'riq, ko'z oldi qorong'ulashishi, quloqda shovqin, bosh og'rig'i.",
+        "urgent": false
+      }
+    ]
+  },
+  "neck": {
+    "title": "🦴 Bo'yin",
+    "icon": "🦴",
+    "color": "#06b6d4",
+    "diseases": [
+      {
+        "name": "Bo'yin osteoxondrozasi",
+        "tip": "Bo'yin mashqlari, to'g'ri o'tirish holati va issiq kompreslar yordam berishi mumkin.",
+        "desc": "Bo'yinda og'riq, boshga tarqalishi, qo'llarga uvushish berishi, harakatlanganda qarsillash.",
+        "urgent": false
+      },
+      {
+        "name": "Qalqonsimon bez kasalliklari",
+        "tip": "Shifokorga murojaat qiling. O'z-o'zini davolash tavsiya etilmaydi.",
+        "desc": "Bo'yin old qismida shish, terlash, vaznning keskin o'zgarishi, charchash, yurak urishining tezlashishi.",
+        "urgent": false
+      },
+      {
+        "name": "Limfa tugunlari yallig'lanishi",
+        "tip": "Issiqlik, dam olish va ko'p suyuqlik ichish. Og'riq kuchaysa shifokorga boring.",
+        "desc": "Bo'yin yon tomonlarida og'riqli, yumshoq shishlar, isitma, umumiy holsizlik bilan birgalikda.",
+        "urgent": false
+      },
+      {
+        "name": "Bo'yin sinishi",
+        "tip": "Boshni qimirlatmang! Zudlik bilan 103 ga qo'ng'iroq qiling.",
+        "desc": "Jiddiy jarohatlarda bo'yinni qimirlatish xavfli. Shikastlangan odamni qimirlatmang.",
+        "urgent": true
+      }
+    ]
+  },
+  "chest": {
+    "title": "🫁 Ko'krak",
+    "icon": "🫁",
+    "color": "#ef4444",
+    "diseases": [
+      {
+        "name": "Nafas siqishi (Astma)",
+        "tip": "Xotirjam bo'ling, to'g'ri o'tiring. Inhalator bo'lsa ishlatib ko'ring.",
+        "desc": "Xillash, nafas olish qiyinlashishi, yo'tal, ko'krakda siqish hissi, ayniqsa kechasi kuchayishi.",
+        "urgent": false
+      },
+      {
+        "name": "Yurak og'rig'i (Stenokardiya)",
+        "tip": "Hoziroq 103 ga qo'ng'iroq qiling! Dam oling va harakatsiz o'tiring.",
+        "desc": "Ko'krak ortida siquvchi, bosuvchi og'riq, chap qo'lga, bo'yinga yoki jag'ga berishi, terlash, nafas qisilishi.",
+        "urgent": true
+      },
+      {
+        "name": "Bronxit",
+        "tip": "Ko'p suyuqlik iching, issiq bug' nafas oling, dam oling. Isitma ko'tarilsa shifokorga boring.",
+        "desc": "Nam yoki quruq yo'tal, ko'krakda og'riq, ba'zan past isitma, umumiy holsizlik.",
+        "urgent": false
+      },
+      {
+        "name": "Pnevmoniya (O'pka yallig'lanishi)",
+        "tip": "Shifokorga murojaat qiling. Uyda davolanish ko'rsatmalariga rioya qiling.",
+        "desc": "Kuchli isitma (38C+), nam yo'tal, nafas qisilishi, ko'krakda og'riq, umumiy holsizlik.",
+        "urgent": false
+      }
+    ]
+  },
+  "abdomen": {
+    "title": "🫃 Qorin",
+    "icon": "🫃",
+    "color": "#f59e0b",
+    "diseases": [
+      {
+        "name": "O'tkir appenditsit",
+        "tip": "Zudlik bilan 103 ga qo'ng'iroq qiling! Og'riq vaqtida ovqat emang!",
+        "desc": "Kindik atrofida boshlanib, o'ng chanoqqa o'tuvchi kuchli og'riq, isitma, ko'ngil aynishi.",
+        "urgent": true
+      },
+      {
+        "name": "Gastrit / Yarali kasallik",
+        "tip": "Ovqatni me'yorida, kichik porsiyalarda yeng. Achchiq va kislotali taomlardan saqlaning.",
+        "desc": "Oshqozon sohasida achishish, ko'ngil aynishi, ovqatdan keyin og'riq, ishtahasizlik.",
+        "urgent": false
+      },
+      {
+        "name": "Zaharlanish (Gastroenterit)",
+        "tip": "Ko'p suyuqlik iching (kichik yutumlar bilan). Engil ovqat: suv, galeta, sho'rva.",
+        "desc": "Ko'ngil aynishi, qayt qilish, ich ketishi, qorin burishib og'rishi, ba'zan isitma.",
+        "urgent": false
+      },
+      {
+        "name": "Buyrak toshi",
+        "tip": "Ko'p suv iching, issiq kompres. Og'riq kuchli bo'lsa shifokorga boring.",
+        "desc": "Bel va qorin yon tomonida to'satdan kuchli, sanch og'riq, siydik bilan qon, ko'ngil aynishi.",
+        "urgent": false
+      }
+    ]
+  },
+  "shoulder": {
+    "title": "💪 Yelka",
+    "icon": "💪",
+    "color": "#10b981",
+    "diseases": [
+      {
+        "name": "Yelka bo'g'imi chiqishi",
+        "tip": "O'zingiz tiklashga urinmang! Shifokorga yoki tez yordamga murojaat qiling.",
+        "desc": "Yiqilib tushgandan keyin yelkada kuchli og'riq, qo'lni ko'tara olmaslik, yelkaning notabiiy ko'rinishi.",
+        "urgent": true
+      },
+      {
+        "name": "Yelka periartrit",
+        "tip": "Dam oling, issiq kompres. Yelka mashqlari va fizioferapiya yordam berishi mumkin.",
+        "desc": "Yelkada sekin kuchayuvchi og'riq, tungi og'riq, qo'l harakati cheklanishi.",
+        "urgent": false
+      },
+      {
+        "name": "Rotatorfuff jarohati",
+        "tip": "Yelkani ortiqcha yuklamang. Sovuq/issiq kompres va dam olish foydali.",
+        "desc": "Yelkada og'riq, kuch yo'qolishi, qo'lni ko'targanida og'riq kuchayishi.",
+        "urgent": false
+      }
+    ]
+  },
+  "arm": {
+    "title": "🤲 Qo'l",
+    "icon": "🤲",
+    "color": "#3b82f6",
+    "diseases": [
+      {
+        "name": "Qo'l suyagi sinishi",
+        "tip": "Qo'lni qimirlatmang. Longas (skafu) bilan mahkamlab, shifokorga boring.",
+        "desc": "Zarba yoki yiqilishdan keyin kuchli og'riq, shish, ko'karish, qo'lni qimirlatib bo'lmaslik.",
+        "urgent": true
+      },
+      {
+        "name": "Karpal tunnel sindromi",
+        "tip": "Bilakni ko'p ishlatmang, tunda maxsus bilak tutgich taqing.",
+        "desc": "Bilak va barmoqlarda uvushish, kuchsizlik, kechasi kuchayishi, kompyuterni ko'p ishlatuvchilarda keng.",
+        "urgent": false
+      },
+      {
+        "name": "Artrit / Artroz",
+        "tip": "Harakatlaning, vazningizni nazorat qiling, issiq kompres. Shifokor bilan maslahat qiling.",
+        "desc": "Bo'g'imlarda shish, qizirish va harakatlanganda og'riq, ertalab qattiqlashish.",
+        "urgent": false
+      }
+    ]
+  },
+  "hand": {
+    "title": "🖐 Kaft va Barmoqlar",
+    "icon": "🖐",
+    "color": "#8b5cf6",
+    "diseases": [
+      {
+        "name": "Barmoq sinishi",
+        "tip": "Barmoqni mahkamlab, muzli kompres qo'ying. Shifokorga murojaat qiling.",
+        "desc": "Barmoqda shish, ko'karish, qimirlatib bo'lmaslik, og'riq.",
+        "urgent": false
+      },
+      {
+        "name": "Panja artriti",
+        "tip": "Ertalab iliq suv bilan barmoqlarni harakatlantiring. Issiq kompres foydali.",
+        "desc": "Barmoq bo'g'imlarida shish va qattiqlik, ayniqsa ertalab, qizarish.",
+        "urgent": false
+      },
+      {
+        "name": "Qon aylanishi buzilishi",
+        "tip": "Barmoqlarni massaj qiling, harakatlantiring. Sovuqdan himoya qiling.",
+        "desc": "Barmoqlar oqarishi yoki ko'karib ketishi, sovuq tuyulishi, uvushish.",
+        "urgent": false
+      }
+    ]
+  },
+  "hip": {
+    "title": "🦴 Chanoq",
+    "icon": "🦴",
+    "color": "#f97316",
+    "diseases": [
+      {
+        "name": "Son bo'g'imi artrozi",
+        "tip": "Yurishni davom ettiring (og'riq kuchli bo'lmasa). Vazningizni nazorat qiling.",
+        "desc": "Son va chanoqda og'riq, yurganida og'riydi, aksash paydo bo'ladi, harakat cheklanadi.",
+        "urgent": false
+      },
+      {
+        "name": "Ishias (Siyatik nerv)",
+        "tip": "Dam oling, issiq kompres. Og'ir narsalarni ko'tarmang.",
+        "desc": "Bel va son orqa tomonida sanchuvchi og'riq, oyoqqa tarqalishi, uvushish va kuchsizlik.",
+        "urgent": false
+      },
+      {
+        "name": "Chanoq suyagi sinishi",
+        "tip": "Zudlik bilan 103 ga qo'ng'iroq qiling! Keksalarda yiqilishdan keyin xavfli.",
+        "desc": "Chanoq sohasida kuchli og'riq, yura olmaslik, oyoqlar turli uzunlikda ko'rinishi.",
+        "urgent": true
+      }
+    ]
+  },
+  "thigh": {
+    "title": "🦵 Son",
+    "icon": "🦵",
+    "color": "#ec4899",
+    "diseases": [
+      {
+        "name": "Son mushagi cho'zilishi",
+        "tip": "Sovuq kompres (birinchi 24 soat), so'ng issiq. Dam oling, cho'zmang.",
+        "desc": "Sportda to'satdan og'riq, yurishda qiyinchilik, mushakda taranglashish hissi.",
+        "urgent": false
+      },
+      {
+        "name": "Son suyagi sinishi",
+        "tip": "Zudlik bilan 103 ga qo'ng'iroq qiling! Oyoqni qimirlatmang.",
+        "desc": "Keksalarda yiqilgandan keyin son sohasida kuchli og'riq, yura olmaslik.",
+        "urgent": true
+      },
+      {
+        "name": "Son mushak tortishishi",
+        "tip": "Mushakni sekin cho'zing, massaj qiling. Magniyli oziq-ovqat iste'mol qiling.",
+        "desc": "To'satdan kuchli og'riq va mushak qotib qolishi, ko'pincha tunda.",
+        "urgent": false
+      }
+    ]
+  },
+  "knee": {
+    "title": "🦿 Tizza",
+    "icon": "🦿",
+    "color": "#14b8a6",
+    "diseases": [
+      {
+        "name": "Tizza bo'g'imi lati / Travma",
+        "tip": "Sovuq kompres, dam olish, tizzani ko'taring. Shish katta bo'lsa shifokorga boring.",
+        "desc": "Tizzada kuchli og'riq, shish, ko'karish va harakatlanish cheklanishi.",
+        "urgent": false
+      },
+      {
+        "name": "Menisk jarohati",
+        "tip": "Tizzaga kuch tushurmang. Shifokorga murojaat qilish tavsiya etiladi.",
+        "desc": "Tizza ichida qarsillash ovozi, shish va og'riq, tizzani to'liq yoza/buka olmaslik.",
+        "urgent": false
+      },
+      {
+        "name": "Tizza artrozi (Gonartroz)",
+        "tip": "Vazningizni nazorat qiling, suzish va velosiped maslahat etiladi. Zina ko'tarishni kamaytiring.",
+        "desc": "Tizzada sekin kuchayuvchi og'riq, zinapoyadan tushganda qiyinchilik, bo'shashish hissi.",
+        "urgent": false
+      }
+    ]
+  },
+  "shin": {
+    "title": "🦴 Boldir",
+    "icon": "🦴",
+    "color": "#0891b2",
+    "diseases": [
+      {
+        "name": "Varikoz kasalligi",
+        "tip": "Oyoqlarni yuqori tutib dam oling. Kompression paypoq yordam beradi.",
+        "desc": "Oyoqlarda og'irlik, tomirlarning bo'rtib chiqishi, shishlar, kechqurunlari og'riq.",
+        "urgent": false
+      },
+      {
+        "name": "Boldir mushagi tortishishi",
+        "tip": "Mushakni sekin cho'zing, massaj qiling. Magniyli taom iste'mol qiling.",
+        "desc": "Tungi kuchli og'riq, mushak qotib qolishi, ayniqsa uyquda kuzatiladi.",
+        "urgent": false
+      },
+      {
+        "name": "Boldir suyagi sinishi",
+        "tip": "Harakatlanmang! Longas qo'yib 103 ga qo'ng'iroq qiling.",
+        "desc": "Yiqilish yoki zarba natijasida kuchli og'riq, shish, oyoqqa tayanib bo'lmaslik.",
+        "urgent": true
+      },
+      {
+        "name": "Tromboflebit",
+        "tip": "Shifokorga zudlik bilan murojaat qiling! Oyoqni massaj qilmang.",
+        "desc": "Boldir qizarishi, issiq tuyulishi, shish va og'riq — qon ivishi belgilari bo'lishi mumkin.",
+        "urgent": true
+      }
+    ]
+  },
+  "foot": {
+    "title": "🦶 Oyoq Panjasi",
+    "icon": "🦶",
+    "color": "#6366f1",
+    "diseases": [
+      {
+        "name": "To'piq burilishi / Chiqishi",
+        "tip": "Sovuq kompres, dam oling, oyoqni ko'taring. Bandaj yordamga beradi.",
+        "desc": "To'piq sohasida shish, ko'karish, yura olmaslik, og'riq.",
+        "urgent": false
+      },
+      {
+        "name": "Tovon og'rig'i (Plantar fassiit)",
+        "tip": "Ertalab oyoq barmoqlarini cho'zing. Yumshoq oyoq kiyim kiyib yuring.",
+        "desc": "Ertalab birinchi qadamda tovonda kuchli og'riq, uzoq o'tirgandan keyin turganida ham og'riydi.",
+        "urgent": false
+      },
+      {
+        "name": "Podagra (Gut)",
+        "tip": "Ko'p suv iching. Go'sht, spirtli ichimliklar va dengiz mahsulotlarini cheklang.",
+        "desc": "Bosh barmoq bo'g'imida to'satdan kuchli og'riq, qizarish va shish, tunda kuchayadi.",
+        "urgent": false
+      }
+    ]
+  },
+  "back": {
+    "title": "🔙 Bel va Orqa",
+    "icon": "🔙",
+    "color": "#f59e0b",
+    "diseases": [
+      {
+        "name": "Bel osteoxondrozasi",
+        "tip": "To'g'ri o'tiring, egilishdan saqlaning. Bel mashqlari va suzish foydali.",
+        "desc": "Belda og'riq, egilganda va o'tirganda kuchayishi, ba'zan oyoqqa tarqalishi.",
+        "urgent": false
+      },
+      {
+        "name": "Disk churrasi (Grija)",
+        "tip": "Og'ir narsalar ko'tarmang, egilmang. Nevrolog bilan maslahatlashing.",
+        "desc": "Belda kuchli og'riq, oyoqqa tarqalishi (ishias), uvushish va kuchsizlik.",
+        "urgent": false
+      },
+      {
+        "name": "Mushak spazmi",
+        "tip": "Issiq kompres, to'g'ri yoting. Sovuqda turish yoki og'ir yuklashdan keyin kuzatiladi.",
+        "desc": "Orqada to'satdan qotib qolish, harakat cheklanishi, bir tomonga qiyshayish.",
+        "urgent": false
+      },
+      {
+        "name": "Buyrak infeksiyasi",
+        "tip": "Bel og'rig'i isitma bilan birga kelsa zudlik bilan shifokorga boring.",
+        "desc": "Belning bir yoki ikki tomonida og'riq, isitma, siydik yo'lida yonish — buyrak infeksiyasi bo'lishi mumkin.",
+        "urgent": true
+      }
+    ]
+  }
+}

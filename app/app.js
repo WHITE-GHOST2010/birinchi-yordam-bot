@@ -1,18 +1,88 @@
+// Safe localStorage wrapper with Telegram CloudStorage sync
+const SafeStorage = {
+    getItem: function (key) {
+        try {
+            return window.localStorage ? window.localStorage.getItem(key) : null;
+        } catch (e) {
+            console.warn("SafeStorage.getItem failed:", e);
+            return null;
+        }
+    },
+    setItem: function (key, value) {
+        try {
+            if (window.localStorage) window.localStorage.setItem(key, value);
+            // Sync with Telegram CloudStorage
+            if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.CloudStorage) {
+                window.Telegram.WebApp.CloudStorage.setItem(key, value, function(err) {
+                    if (err) console.error("CloudStorage setItem error:", err);
+                });
+            }
+        } catch (e) {
+            console.warn("SafeStorage.setItem failed:", e);
+        }
+    },
+    removeItem: function (key) {
+        try {
+            if (window.localStorage) window.localStorage.removeItem(key);
+            // Sync with Telegram CloudStorage
+            if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.CloudStorage) {
+                window.Telegram.WebApp.CloudStorage.removeItem(key, function(err) {
+                    if (err) console.error("CloudStorage removeItem error:", err);
+                });
+            }
+        } catch (e) {
+            console.warn("SafeStorage.removeItem failed:", e);
+        }
+    },
+    // Initialize cache from CloudStorage on startup
+    initFromCloud: function (callback) {
+        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.CloudStorage) {
+            window.Telegram.WebApp.CloudStorage.getKeys(function(err, keys) {
+                if (!err && keys && keys.length > 0) {
+                    window.Telegram.WebApp.CloudStorage.getItems(keys, function(err, values) {
+                        if (!err && values) {
+                            for (let k in values) {
+                                if (window.localStorage) window.localStorage.setItem(k, values[k]);
+                            }
+                        }
+                        if (callback) callback();
+                    });
+                } else {
+                    if (callback) callback();
+                }
+            });
+        } else {
+            if (callback) callback();
+        }
+    }
+};
+
 // Telegram WebApp Initialization
 const tg = window.Telegram ? window.Telegram.WebApp : null;
 
 if (tg) {
-    tg.ready();
-    tg.expand();
-    
-    // Set user info
-    const user = tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
-    if (user) {
-        document.getElementById('user-name').innerText = `${user.first_name} ${user.last_name || ''}`.trim();
-        if (user.photo_url) {
-            document.getElementById('user-avatar').innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-        }
+    try {
+        tg.ready();
+        tg.expand();
+    } catch (e) {
+        console.warn("Telegram WebApp ready/expand failed:", e);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GLOBAL SCORE DISPLAY
+// ═══════════════════════════════════════════════════════════════════
+const urlParams = new URLSearchParams(window.location.search);
+const userScore = urlParams.get('score');
+if (userScore !== null) {
+    document.addEventListener('DOMContentLoaded', () => {
+        const scoreEl = document.getElementById('global-score');
+        const scoreValEl = document.getElementById('global-score-val');
+        if (scoreEl && scoreValEl) {
+            scoreValEl.textContent = userScore;
+            scoreEl.style.display = 'inline-block';
+        }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -20,23 +90,29 @@ if (tg) {
 // ═══════════════════════════════════════════════════════════════════
 
 function initTheme() {
-    const saved = localStorage.getItem('theme') || 'light';
-    if (saved === 'dark') {
-        document.body.classList.add('dark-mode');
-        document.getElementById('theme-toggle-btn').textContent = '☀️';
-    } else {
-        document.body.classList.remove('dark-mode');
-        document.getElementById('theme-toggle-btn').textContent = '🌙';
+    const saved = SafeStorage.getItem('theme') || 'light';
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) {
+        if (saved === 'dark') {
+            document.body.classList.add('dark-mode');
+            btn.textContent = '☀️';
+        } else {
+            document.body.classList.remove('dark-mode');
+            btn.textContent = '🌙';
+        }
     }
 }
 
-document.getElementById('theme-toggle-btn').addEventListener('click', () => {
-    const isDark = document.body.classList.toggle('dark-mode');
-    document.getElementById('theme-toggle-btn').textContent = isDark ? '☀️' : '🌙';
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-});
-
-initTheme();
+function bindThemeToggle() {
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) {
+        btn.onclick = () => {
+            const isDark = document.body.classList.toggle('dark-mode');
+            btn.textContent = isDark ? '☀️' : '🌙';
+            SafeStorage.setItem('theme', isDark ? 'dark' : 'light');
+        };
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // DATA SETS
@@ -49,14 +125,19 @@ const FIRST_AID_ITEMS = [
         icon: "fa-fire-burner",
         color: "var(--accent-orange)",
         bgColor: "var(--accent-orange-bg)",
+        urgency: "high",
         desc: "Kuyganda to'g'ri birinchi yordam ko'rsatish va sovutish.",
+        symptoms: ["Qizarish va shish paydo bo'lishi", "Pufakchalar hosil bo'lishi", "Kuchli achishish va og'riq", "3-darajali kuyishda teri qorayib, sezgisiz bo'lib qoladi"],
         steps: [
             "Kuygan joyni zudlik bilan 10-15 daqiqa davomida oqib turgan sovuq (lekin muzdek emas) suv ostida tuting.",
-            "Kuygan sohaga steril bog'lam yoki toza latta yoping.",
+            "Kuygan sohaga steril bog'lam yoki toza latta yoping — mahkam o'ramasdan, yumshoq qo'ying.",
             "Agar kiyim teriga yopishib qolgan bo'lsa, uni majburlab sug'urib olmang! Atrofini kesib oling.",
-            "Bemorga ko'proq suyuqlik (suv, choy) ichiring."
+            "Bemorga ko'proq suyuqlik (suv, choy) ichiring — organizm suyuqlikni ko'p yo'qotadi.",
+            "Og'riqni kamaytirish uchun ibuprofen yoki paracetamol bering."
         ],
-        prohibited: "Kuygan joyga yog', sariyog', tish pastasi yoki spirt surtmang! Hosil bo'lgan pufakchalarni aslo yormang!"
+        prohibited: "Kuygan joyga yog', sariyog', tish pastasi yoki spirt surtmang! Hosil bo'lgan pufakchalarni aslo yormang!",
+        tips: ["Kuyish maydoni kaft o'lchamidan katta bo'lsa — shifokorga boring", "Qovoq yoki kartoshka shirasi xalq tabobatida ishlatilsa ham, tibbiy jihatdan tavsiya etilmaydi"],
+        whenToCall103: ["Kuyish maydoni katta bo'lsa (kaft o'lchamidan katta)", "Yuz, qo'l, oyoq, jinsiy a'zolar yoki bo'g'imlar kuygan bo'lsa", "Bemor 5 yoshdan kichik yoki 60 yoshdan katta bo'lsa", "Kuyish kimyoviy modda yoki elektr tokidan bo'lsa"]
     },
     {
         id: "qon_ketishi",
@@ -64,14 +145,19 @@ const FIRST_AID_ITEMS = [
         icon: "fa-droplet",
         color: "var(--accent-red)",
         bgColor: "var(--accent-red-bg)",
+        urgency: "critical",
         desc: "Kuchli qon ketishini to'xtatish va jgut bog'lash qoidalari.",
+        symptoms: ["Qip-qizil (vena) yoki och qizil, otilib chiquvchi (arteriya) qon", "Bosh aylanishi va keskin holsizlanish", "Rangi o'chib, terisi oqarishi", "Yurak tez urishi va sovuq ter"],
         steps: [
             "Yara ustiga toza bog'lam yoki latta qo'yib, qo'l bilan 5-10 daqiqa davomida mahkam bosing.",
-            "Iloji bo'lsa, jarohatlangan a'zoni (oyoq yoki qo'l) yurak sathidan balandroq ko'taring.",
-            "Kuchli arterial (och qizil, otilib chiquvchi) qon ketishida yaraning yuqori qismidan turniket (jgut) bog'lang va vaqtini yozib qo'ying.",
-            "Turniketni yozda 1.5 soat, qishda 1 soatdan ortiq bog'liq qoldirmang. Har 30 daqiqada bo'shatib turing."
+            "Iloji bo'lsa, jarohatlangan a'zoni yurak sathidan balandroq ko'taring.",
+            "Kuchli arterial qon ketishida yaraning yuqori qismidan turniket (jgut) bog'lang va ALBATTA vaqtini yozib qo'ying.",
+            "Turniketni yozda 1.5 soat, qishda 1 soatdan ortiq bog'liq qoldirmang. Har 30 daqiqada bo'shatib turing.",
+            "Qon bog'lamni shimib o'tgan bo'lsa, uni surib olmang — ustiga yangi qavat qo'ying."
         ],
-        prohibited: "Yaradagi yot jismlarni (shisha bo'lagi, sim, mix) o'zboshimchalik bilan sug'urib olmang! Bu qon ketishini kuchaytiradi."
+        prohibited: "Yaradagi yot jismlarni (shisha bo'lagi, sim, mix) o'zboshimchalik bilan sug'urib olmang! Bu qon ketishini kuchaytiradi.",
+        tips: ["Turniket vaqtini bemorning manglayiga yoki qog'ozga yozing — shifoxona uchun muhim", "Qo'lqop bilan qon bilan aloqani cheklang — infeksiyadan himoya"],
+        whenToCall103: ["Qon ketish to'xtatib bo'lmasa", "Kuchli arterial qon ketish bo'lsa", "Bemor hushini yo'qotsa", "Yara juda katta va chuqur bo'lsa"]
     },
     {
         id: "sinish",
@@ -79,29 +165,39 @@ const FIRST_AID_ITEMS = [
         icon: "fa-bone",
         color: "var(--accent-blue)",
         bgColor: "var(--accent-blue-bg)",
+        urgency: "high",
         desc: "Suyak singanda shina qo'yish va og'riqsizlantirish.",
+        symptoms: ["Shikastlangan joyda keskin og'riq", "Shish va ko'karish paydo bo'lishi", "A'zoni harakatlantira olmaslik", "Ba'zan suyak ko'rinib qolishi (ochiq sinish)"],
         steps: [
-            "Shikastlangan a'zoni (qo'l yoki oyoqni) harakatsiz holatga keltiring.",
-            "Shina sifatida taxtacha, qattiq karton yoki har qanday tekis buyumdan foydalanib bog'lang (singan bo'g'imning pastki va yuqori qismini qamrab olsin).",
-            "Shish va og'riqni kamaytirish uchun latta bilan o'ralgan muz qo'ying.",
-            "Ochiq sinishda avval yaraga steril bog'lam qo'ying, so'ngra shinani mahkamlang."
+            "Shikastlangan a'zoni harakatsiz holatga keltiring.",
+            "Shina sifatida taxtacha, qattiq karton yoki tekis buyumdan foydalanib bog'lang — singan bo'g'imning pastki va yuqori qismini qamrab olsin.",
+            "Shish va og'riqni kamaytirish uchun latta bilan o'ralgan muz qo'ying (20 daq, keyin 20 daq tanaffus).",
+            "Ochiq sinishda avval yaraga steril bog'lam qo'ying, so'ngra shinani mahkamlang.",
+            "Og'riqsizlantirish uchun ibuprofen bering va tez yordamni kutish davomida bemorni iliq saqlang."
         ],
-        prohibited: "Singan suyakni o'z joyiga solishga yoki to'g'rilashga urinmang! Bemorni ortiqcha harakatlantirmang."
+        prohibited: "Singan suyakni o'z joyiga solishga yoki to'g'rilashga urinmang! Bemorni ortiqcha harakatlantirmang.",
+        tips: ["Shina juda qattiq bog'lanmasin — barmoqlar ko'karsa bo'shatib qo'ying", "Sinish sohasini yurakdan baland tutish shishni kamaytiradi"],
+        whenToCall103: ["Bel umurtqasi, tos suyagi yoki bosh suyagi singanda", "Suyak teriga tashqariga chiqib qolgan bo'lsa (ochiq sinish)", "Bemor qo'l-oyog'ini his qilmayotgan bo'lsa", "A'zo g'ayriy tabiiy holda qiyshayib qolgan bo'lsa"]
     },
     {
         id: "bogilish",
-        title: "🫣 Bo'g'ilish",
+        title: "🫣 Bo\'g\'ilish",
         icon: "fa-head-side-cough",
         color: "var(--accent-orange)",
         bgColor: "var(--accent-orange-bg)",
-        desc: "Tomoqqa narsa tiqilib qolganda Geymlix usulini qo'llash.",
+        urgency: "critical",
+        desc: "Tomoqqa narsa tiqilib qolganda Geymlix usulini qo\'llash.",
+        symptoms: ["Birdan gapirishda qiynalish yoki ovoz chiqmasligi", "Nafas olishda xirillash yoki hech nafas yo'qligi", "Yuz binafsha yoki ko'karishi", "Ikkala qo'l bilan tomoqni ushlab turish (universal bo'g'ilish belgisi)"],
         steps: [
-            "Agar bemor yo'tala olsa, uni qattiqroq yo'talishga undang (eng yaxshi tabiiy yo'l).",
-            "Bemor ozroq oldinga engashsin. Kaftingiz asosi bilan uning kuraklari orasiga 5 marta kuchli zarb bilan uring.",
-            "Geymlix usuli: Bemor orqasidan turib, belidan quchoqlang. Bir qo'lni musht qilib, kindikdan biroz yuqoriga qo'ying. Ikkinchi qo'l bilan mushtni tutib, o'zingizga va yuqoriga qarab 5 marta keskin torting.",
-            "Hushsiz holatda: Bemorni tekis yotqizib, zudlik bilan sun'iy nafas va yurak massajini boshlang."
+            "Agar bemor yo'tala olsa, uni qattiqroq yo'talishga undang — eng yaxshi tabiiy yo'l.",
+            "Bemor ozroq oldinga engashsin. Kaftingiz asosi bilan kuraklari orasiga 5 marta kuchli zarb bilan uring.",
+            "Geymlix usuli: Bemor orqasidan turib, belidan quchoqlang. Bir qo'lni musht qilib, kindikdan biroz yuqoriga qo'ying. Ikkinchi qo'l bilan mushtni tutib, o'zingizga va yuqoriga 5 marta keskin torting.",
+            "Kerak bo'lsa, 5 zarb + 5 Geymlix kombinatsiyasini navbatlashing.",
+            "Hushsiz holatda: Bemorni yotqizib, og'izni tekshiring, ko'rinadigan jismni olib tashlang va CPR boshlang."
         ],
-        prohibited: "Tomoqdagi yot jismni ko'rmasdan turib barmoq bilan qidirib tortishga urinmang! Uni yanada chuqurroq tiqib yuborishingiz mumkin."
+        prohibited: "Tomoqdagi yot jismni ko'rmasdan turib barmoq bilan qidirib tortishga urinmang! Uni yanada chuqurroq tiqib yuborishingiz mumkin.",
+        tips: ["Chaqaloqlarda (1 yoshgacha) Geymlix usuli QILINMAYDI — maxsus usul qo'llaniladi", "Jism chiqqan bo'lsa ham, 103 ga qo'ng'iroq qiling — shifokor tekshirishi kerak"],
+        whenToCall103: ["Jism chiqmasa va bemor nafas ololmayotgan bo'lsa — DARHOL", "Bemor hushini yo'qotsa", "Jism chiqqandan keyin ham nafas qiynalsa", "Bolada bo'g'ilish bo'lsa"]
     },
     {
         id: "yurak_xuruji",
@@ -109,14 +205,19 @@ const FIRST_AID_ITEMS = [
         icon: "fa-heart-circle-xmark",
         color: "var(--accent-red)",
         bgColor: "var(--accent-red-bg)",
+        urgency: "critical",
         desc: "Ko'krak qafasidagi kuchli siquvchi og'riqda tezkor choralar.",
+        symptoms: ["Ko'krakda siquvchi, ezuvchi og'riq (15 daqiqadan ortiq)", "Og'riq chap qo'l, yelka, bo'yin yoki jagga tarqalishi", "Nafas qisilishi va sovuq ter", "Ko'ngil aynishi va qusish", "Qo'rquv va holsizlik"],
         steps: [
-            "Bemorni zudlik bilan yarim o'tirgan holatga keltiring, tinchlantiring va ortiqcha harakatlarni taqiqlang.",
-            "Yoqasini oching, bo'yinbog'ini bo'shating, derazani ochib toza havo kelishini ta'minlang.",
-            "Zudlik bilan tez yordam (103) chaqiring.",
-            "Bemor hushini yo'qotsa va nafasdan qolsa, kechiktirmasdan yurak-o'pka reanimatsiyasini boshlang."
+            "Bemorni zudlik bilan yarim o'tirgan holatga keltiring, tinchlantiring.",
+            "Yoqasini oching, bo'yinbog'ini bo'shating, toza havo kelishini ta'minlang.",
+            "DARHOL 103 chaqiring — har daqiqa muhim!",
+            "Agar mavjud bo'lsa, til ostiga 1 ta Nitrogliserin tabletkasini qo'ying — 5 daqiqadan keyin o'tmasa yana 1 ta.",
+            "Bemor hushini yo'qotsa va nafasdan qolsa — CPR (yurak-o'pka reanimatsiyasi) ni boshlang."
         ],
-        prohibited: "Bemorni turishga, yurishga yoki jismoniy zo'riqishga majburlamang! Bemorni yolg'iz qoldirmang."
+        prohibited: "Bemorni turishga, yurishga yoki jismoniy zo'riqishga majburlamang! Bemorni yolg'iz qoldirmang.",
+        tips: ["CPR: To'sh suyagining markaziga ikkala qo'l bilan minutiga 100-120 marta 5 sm chuqurlikda bosing", "Aspirin chaynash (qon suyultiradi) — faqat allergiyasi bo'lmasa"],
+        whenToCall103: ["Ko'krakda og'riq 5 daqiqadan ko'p davom etsa — DARHOL", "Nafas qisilishi boshlanib qolsa", "Bemor hushini yo'qotsa", "Birinchi marta shunday og'riq bo'lsa"]
     },
     {
         id: "hushdan_ketish",
@@ -124,29 +225,39 @@ const FIRST_AID_ITEMS = [
         icon: "fa-face-dizzy",
         color: "var(--accent-blue)",
         bgColor: "var(--accent-blue-bg)",
+        urgency: "medium",
         desc: "Hushini yo'qotgan odamni o'ziga keltirish va yotqizish.",
+        symptoms: ["To'satdan kuchsizlanish va ko'z qorayishi", "Ko'ngil aynishi va terlash", "Rangi o'chib, terisi oqarishi", "Quloqlarda shovqin"],
         steps: [
-            "Bemorni tekis joyga orqasi bilan yotqizib, oyoqlarini 30 sm balandlikka ko'taring (miya qon aylanishini yaxshilash uchun).",
-            "Nafas olishini osonlashtirish uchun kiyimlarini bo'shating (tugmalarni yeching).",
+            "Bemorni tekis joyga orqasi bilan yotqizib, oyoqlarini 30 sm balandlikka ko'taring — miyaga qon oqimini oshirish uchun.",
+            "Nafas olishini osonlashtirish uchun kiyimlarini bo'shating.",
             "Noshadir spirtini paxtaga tomizib, burunga 5-10 sm masofadan hidlatib ko'ring.",
-            "Agar bemor nafas olayotgan bo'lsa-yu hushiga kelmasa, uni xavfsiz yonbosh holatga yotqizib qo'ying."
+            "Agar bemor nafas olayotgan bo'lsa-yu hushiga kelmasa, uni xavfsiz yonbosh holatga yotqizib qo'ying.",
+            "Hushiga kelgach, 5-10 daqiqa yotsin — shoshilinch turg'izib yubormang."
         ],
-        prohibited: "Hushsiz odamning og'ziga suv quymang yoki dori tiqmang! U tiqilib bo'g'ilib qolishi mumkin."
+        prohibited: "Hushsiz odamning og'ziga suv quymang yoki dori tiqmang! U bo'g'ilib qolishi mumkin.",
+        tips: ["Hushdan ketishdan oldin ko'pincha ogohlantiruv belgilari bo'ladi — darhol o'tirib qolsa kan aylanish tiklanadi", "Ko'p takrorlansa — shifokorga murojaat zarur (yurak yoki asab kasalligi)"],
+        whenToCall103: ["Bemor 1 daqiqadan ko'p hushsiz qolsa", "Hushiga kelgandan keyin gapirishda muammo bo'lsa", "Yiqilib, boshini urib olgan bo'lsa", "Yurak kasalligi tarixi bo'lgan odamda hushdan ketish bo'lsa"]
     },
     {
         id: "zaharlanish",
         title: "🧪 Zaharlanish",
-        icon: "fa-flask-poisonous",
+        icon: "fa-vial",
         color: "var(--accent-green)",
         bgColor: "var(--accent-green-bg)",
+        urgency: "high",
         desc: "Kimyoviy moddalar yoki eskirgan taomdan zaharlanish.",
+        symptoms: ["Ko'ngil aynishi va qusish", "Qorin og'rig'i va ich ketishi", "Bosh og'rig'i va bosh aylanishi", "Og'izda achish yoki achchiq ta'm", "Ko'z qorachig'i kengayishi yoki torayishi (kimyoviy zaharlanishda)"],
         steps: [
             "Zahar og'iz orqali kirgan va bemor hushida bo'lsa, tezda 1 litrgacha iliq suv ichirib, tilining ildiziga bosib qustiring.",
             "Zaharni bog'lash uchun faollashtirilgan ko'mir bering (har 10 kg vazn uchun 1 tabletka).",
-            "Bemor ko'p suyuqlik ichishi kerak (suvsizlanishni oldini olish uchun).",
-            "Zaharli gazdan zaharlanganda zudlik bilan toza havoga olib chiqing va kiyimlarini bo'shating."
+            "Ko'p suyuqlik ichiring — Regidron ayniqsa foydali.",
+            "Zaharli gazdan zaharlanganda zudlik bilan toza havoga olib chiqing va kiyimlarini bo'shating.",
+            "Qaysi modda bilan zaharlanganini aniqlang — bu shifoxonada davolashni osonlashtiradi."
         ],
-        prohibited: "Kislota, ishqor yoki neft mahsulotlari bilan zaharlanganda qustirish mutlaqo taqiqlanadi (qizilo'ngachni qayta kuydiradi!)."
+        prohibited: "Kislota, ishqor yoki neft mahsulotlari bilan zaharlanganda qustirish mutlaqo taqiqlanadi!",
+        tips: ["Zaharlanish o'tgan ovqatni saqlang yoki rasmga oling — laboratoriya uchun kerak", "Zahar qutisini yoki nomini yozib, 103 operatoriga ayting"],
+        whenToCall103: ["Kimyoviy modda bilan zaharlanishda — DARHOL", "Bemor hushsiz bo'lsa", "Bolada zaharlanish bo'lsa", "Simptomlar 6 soatdan ko'p davom etsa"]
     },
     {
         id: "issiqlik_urishi",
@@ -154,14 +265,19 @@ const FIRST_AID_ITEMS = [
         icon: "fa-sun",
         color: "var(--accent-orange)",
         bgColor: "var(--accent-orange-bg)",
+        urgency: "high",
         desc: "Quyosh va issiq havoda tana harorati ko'tarilganda sovutish.",
+        symptoms: ["Tana harorati 40°C dan oshishi", "Ter chiqmasligi — xavfli belgi!", "Qizil va quruq teri", "Bosh og'rig'i, ko'ngil aynishi, qayt qilish", "Ong butalishi yoki hushdan ketish"],
         steps: [
-            "Bemorni zudlik bilan soya, salqin va havo aylanadigan joyga olib o'ting.",
+            "Bemorni ZUDLIK bilan soya, salqin va havo aylanadigan joyga olib o'ting.",
             "Ustki kiyimlarini yeching yoki bo'shating.",
             "Peshonasiga, bo'yniga, qo'ltiq ostiga sovuq suvda ho'llangan latta qo'ying.",
-            "Hushida bo'lsa, tez-tez oz-ozdan sovuq suv yoki mineral suv ichiring."
+            "Hushida bo'lsa, tez-tez oz-ozdan sovuq suv yoki mineral suv ichiring.",
+            "Tana haroratini 38°C gacha tushirishga harakat qiling."
         ],
-        prohibited: "Tana harorati juda yuqori bo'lganda bemorni muzdek suvli vannaga birdan solmang (shok holatiga tushishi mumkin)."
+        prohibited: "Tana harorati juda yuqori bo'lganda bemorni muzdek suvli vannaga birdan solmang — shok holatiga tushishi mumkin.",
+        tips: ["Issiq kunlarda qorni to'q holda, tush paytida uzoq qolmang", "Harorat 38°C ga tushgach, sovutishni to'xtating — ortiqcha sovutish ham xavfli"],
+        whenToCall103: ["Bemor hushini yo'qotsa", "Tana harorati 40°C dan oshsa", "Ter chiqmayotgan bo'lsa", "Simptomlar 15-20 daqiqadan ko'p davom etsa"]
     }
 ];
 
@@ -278,14 +394,37 @@ const DISEASES_DATA = [
 // ═══════════════════════════════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', () => {
-    initTabs();
-    renderFirstAidGrid();
-    renderDiseases(DISEASES_DATA);
-    initSearch();
-    initCalculators();
-    initOverlay();
-    initQuiz();
-    initHistory();
+    SafeStorage.initFromCloud(function() {
+        try {
+            initTheme();
+            bindThemeToggle();
+
+            // Safe Telegram User Info Setup inside DOMContentLoaded
+            if (tg) {
+                const user = tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
+                if (user) {
+                    const nameEl = document.getElementById('user-name');
+                    if (nameEl) nameEl.innerText = `${user.first_name} ${user.last_name || ''}`.trim();
+
+                    const avatarEl = document.getElementById('user-avatar');
+                    if (avatarEl && user.photo_url) {
+                        avatarEl.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+                    }
+                }
+            }
+
+            initTabs();
+            renderFirstAidGrid();
+            renderDiseases(DISEASES_DATA);
+            initSearch();
+            initCalculators();
+            initOverlay();
+            initQuiz();
+            initHistory();
+        } catch (e) {
+            alert("DOM Init 1 Error: " + e.message + "\nStack: " + e.stack);
+        }
+    });
 });
 
 // TAB SYSTEM
@@ -296,10 +435,10 @@ function initTabs() {
     navButtons.forEach(btn => {
         btn.addEventListener('click', () => {
             const targetTab = btn.getAttribute('data-tab');
-            
+
             navButtons.forEach(b => b.classList.remove('active'));
             tabContents.forEach(tc => tc.classList.remove('active'));
-            
+
             btn.classList.add('active');
             document.getElementById(targetTab).classList.add('active');
         });
@@ -310,12 +449,12 @@ function initTabs() {
 function renderFirstAidGrid() {
     const grid = document.getElementById('first-aid-grid');
     grid.innerHTML = '';
-    
+
     FIRST_AID_ITEMS.forEach(item => {
         const card = document.createElement('div');
         card.className = 'first-aid-card';
         card.setAttribute('data-id', item.id);
-        
+
         card.innerHTML = `
             <div class="card-icon" style="background-color: ${item.bgColor}; color: ${item.color};">
                 <i class="fa-solid ${item.icon}"></i>
@@ -323,11 +462,11 @@ function renderFirstAidGrid() {
             <h3>${item.title}</h3>
             <p>${item.desc}</p>
         `;
-        
+
         card.addEventListener('click', () => {
             openFirstAidDetail(item);
         });
-        
+
         grid.appendChild(card);
     });
 }
@@ -337,9 +476,18 @@ function openFirstAidDetail(item) {
     const overlay = document.getElementById('overlay-details');
     const title = document.getElementById('overlay-title');
     const body = document.getElementById('overlay-body-content');
-    
+
     title.innerText = item.title;
-    
+
+    // Urgency badge
+    const urgencyMap = {
+        critical: { label: 'KRITIK', color: '#ff3b30', bg: 'rgba(255,59,48,0.12)' },
+        high: { label: 'MUHIM', color: '#ff9500', bg: 'rgba(255,149,0,0.12)' },
+        medium: { label: "O'RTA", color: '#007aff', bg: 'rgba(0,122,255,0.12)' }
+    };
+    const urg = urgencyMap[item.urgency] || urgencyMap.medium;
+
+    // Steps HTML
     let stepsHtml = '';
     item.steps.forEach((step, idx) => {
         stepsHtml += `
@@ -349,35 +497,87 @@ function openFirstAidDetail(item) {
             </div>
         `;
     });
-    
+
+    // Symptoms HTML
+    let symptomsHtml = '';
+    if (item.symptoms && item.symptoms.length) {
+        symptomsHtml = `
+            <div class="detail-section">
+                <div class="detail-section-title"><span class="detail-icon">🩺</span> Alomatlar</div>
+                <div class="detail-tags-grid">
+                    ${item.symptoms.map(s => `<div class="symptom-tag">${s}</div>`).join('')}
+                </div>
+            </div>`;
+    }
+
+    // When to call 103
+    let call103Html = '';
+    if (item.whenToCall103 && item.whenToCall103.length) {
+        call103Html = `
+            <div class="call103-card">
+                <div class="call103-header">
+                    <span class="call103-icon">📞</span>
+                    <span>Qachon <strong>103</strong> chaqirish kerak?</span>
+                </div>
+                <ul class="call103-list">
+                    ${item.whenToCall103.map(c => `<li>${c}</li>`).join('')}
+                </ul>
+                <a href="tel:103" class="call103-btn" onclick="if(window.Telegram&&window.Telegram.WebApp){window.Telegram.WebApp.openLink('tel:103');return false;}">
+                    📞 103 — Tez yordam
+                </a>
+            </div>`;
+    }
+
+    // Tips HTML
+    let tipsHtml = '';
+    if (item.tips && item.tips.length) {
+        tipsHtml = `
+            <div class="detail-section">
+                <div class="detail-section-title"><span class="detail-icon">💡</span> Foydali maslahatlar</div>
+                ${item.tips.map(t => `<div class="tip-item"><span class="tip-dot">•</span><span>${t}</span></div>`).join('')}
+            </div>`;
+    }
+
     body.innerHTML = `
-        <p style="font-weight: 500; font-size: 15px; margin-bottom: 20px;">${item.desc}</p>
-        <h4>🛠️ Bosqichma-bosqich yordam:</h4>
-        <div style="margin-top: 12px;">${stepsHtml}</div>
-        
+        <div class="detail-urgency-badge" style="background:${urg.bg}; color:${urg.color};">
+            ⚡ ${urg.label} HOLAT
+        </div>
+        <p class="detail-desc">${item.desc}</p>
+
+        ${symptomsHtml}
+
+        <div class="detail-section">
+            <div class="detail-section-title"><span class="detail-icon">🛠️</span> Bosqichma-bosqich yordam</div>
+            <div style="margin-top: 10px;">${stepsHtml}</div>
+        </div>
+
         <div class="prohibited-card">
-            <h5>⚠️ Mutlaqo taqiqlanadi:</h5>
+            <div class="prohibited-title">🚫 Mutlaqo taqiqlanadi</div>
             <p>${item.prohibited}</p>
         </div>
+
+        ${tipsHtml}
+        ${call103Html}
     `;
-    
+
     overlay.classList.add('active');
+    body.scrollTop = 0;
 }
 
 // RENDER DISEASES
 function renderDiseases(data) {
     const container = document.getElementById('disease-list-container');
     container.innerHTML = '';
-    
+
     if (data.length === 0) {
         container.innerHTML = `<div style="text-align:center; padding: 30px; color: var(--hint-color);">Natija topilmadi 😕</div>`;
         return;
     }
-    
+
     data.forEach(item => {
         const div = document.createElement('div');
         div.className = 'disease-item';
-        
+
         div.innerHTML = `
             <div class="disease-info">
                 <h4>${item.name}</h4>
@@ -385,11 +585,11 @@ function renderDiseases(data) {
             </div>
             <i class="fa-solid fa-chevron-right"></i>
         `;
-        
+
         div.addEventListener('click', () => {
             openDiseaseDetail(item);
         });
-        
+
         container.appendChild(div);
     });
 }
@@ -399,44 +599,67 @@ function openDiseaseDetail(item) {
     const overlay = document.getElementById('overlay-details');
     const title = document.getElementById('overlay-title');
     const body = document.getElementById('overlay-body-content');
-    
+
     title.innerText = item.name;
-    
+
+    const catColors = {
+        'Infeksiya': '#ff9500', 'Nafas': '#007aff', 'Yurak': '#ff3b30',
+        'Oshqozon': '#34c759', 'Asab': '#af52de', 'Ruhiy': '#af52de',
+        'Teriga': '#ff9500', "Ko'z": '#007aff', 'Tish': '#34c759',
+        'Travma': '#ff3b30', 'Miya': '#ff3b30', 'Buyrak': '#007aff',
+        'Tayanch': '#ff9500', 'Endokrin': '#34c759', 'Jigar': '#ff9500'
+    };
+    const catColor = catColors[item.cat] || '#248bcf';
+
     body.innerHTML = `
-        <h4 style="margin-top:0;">📚 Kasallik tavsifi:</h4>
-        <p style="margin-top: 6px; line-height: 1.6;">${item.desc}</p>
-        
-        <h4 style="margin-top: 20px; color: var(--button-color);">💡 Birinchi yordam va chora:</h4>
-        <p style="margin-top: 6px; line-height: 1.6; background-color: var(--secondary-bg-color); padding: 14px; border-radius: 8px;">
-            ${item.aid}
-        </p>
+        <div style="display:inline-flex; align-items:center; gap:8px; background:${catColor}20; color:${catColor}; padding:5px 12px; border-radius:20px; font-size:13px; font-weight:600; margin-bottom:14px;">
+            📁 ${item.cat}
+        </div>
+
+        <div class="detail-section">
+            <div class="detail-section-title"><span class="detail-icon">📋</span> Kasallik tavsifi</div>
+            <p class="detail-desc-text">${item.desc}</p>
+        </div>
+
+        <div class="detail-section">
+            <div class="detail-section-title"><span class="detail-icon">💊</span> Birinchi yordam va chora</div>
+            <div class="aid-card">
+                <p>${item.aid}</p>
+            </div>
+        </div>
+
+        <div class="tip-item" style="margin-top:12px; padding:12px 14px; background:var(--secondary-bg-color); border-radius:10px;">
+            <span>⚠️</span>
+            <span style="font-size:13px; color:var(--hint-color);">Har qanday kasallikda o'z-o'zini davolashdan ko'ra, malakali shifokor ko'rigidan o'tish tavsiya etiladi.</span>
+        </div>
     `;
-    
+
     overlay.classList.add('active');
+    body.scrollTop = 0;
 }
 
 // SEARCH FUNCTIONALITY
 function initSearch() {
     const input = document.getElementById('disease-search-input');
     const clearBtn = document.getElementById('search-clear-btn');
-    
+
     input.addEventListener('input', (e) => {
         const val = e.target.value.toLowerCase().trim();
-        
+
         if (val.length > 0) {
             clearBtn.style.display = 'block';
         } else {
             clearBtn.style.display = 'none';
         }
-        
-        const filtered = DISEASES_DATA.filter(item => 
-            item.name.toLowerCase().includes(val) || 
+
+        const filtered = DISEASES_DATA.filter(item =>
+            item.name.toLowerCase().includes(val) ||
             item.cat.toLowerCase().includes(val)
         );
-        
+
         renderDiseases(filtered);
     });
-    
+
     clearBtn.addEventListener('click', () => {
         input.value = '';
         clearBtn.style.display = 'none';
@@ -448,7 +671,7 @@ function initSearch() {
 function initOverlay() {
     const closeBtn = document.getElementById('close-overlay-btn');
     const overlay = document.getElementById('overlay-details');
-    
+
     closeBtn.addEventListener('click', () => {
         overlay.classList.remove('active');
     });
@@ -458,10 +681,10 @@ function initOverlay() {
 function switchCalc(type) {
     const btns = document.querySelectorAll('.calc-tab-btn');
     const sections = document.querySelectorAll('.calc-section');
-    
+
     btns.forEach(b => b.classList.remove('active'));
     sections.forEach(s => s.classList.remove('active'));
-    
+
     if (type === 'bmi') {
         btns[0].classList.add('active');
         document.getElementById('calc-bmi-section').classList.add('active');
@@ -480,27 +703,27 @@ function initCalculators() {
     btnBmi.addEventListener('click', () => {
         const weight = parseFloat(document.getElementById('bmi-weight').value);
         const height = parseFloat(document.getElementById('bmi-height').value);
-        
+
         if (!weight || !height || weight <= 0 || height <= 0) {
             if (tg) tg.showAlert("Iltimos, vazn va bo'y qiymatlarini to'g'ri kiriting!");
             else alert("Iltimos, vazn va bo'y qiymatlarini to'g'ri kiriting!");
             return;
         }
-        
+
         const heightM = height / 100;
         const bmi = weight / (heightM * heightM);
-        
+
         document.getElementById('bmi-number').innerText = bmi.toFixed(1);
-        
+
         // Normal vazn diapazonini hisoblash
         const minW = 18.5 * (heightM * heightM);
         const maxW = 24.9 * (heightM * heightM);
         document.getElementById('bmi-ideal-range').innerText = `${minW.toFixed(1)} - ${maxW.toFixed(1)} kg`;
-        
+
         let status = '';
         let desc = '';
         let pointerPos = 0; // % from left
-        
+
         if (bmi < 18.5) {
             status = "Kam vazn ⚠️";
             desc = "Sizning tana vazningiz me'yordan past. Sog'lom va to'yimli ovqatlanishga harakat qiling.";
@@ -518,7 +741,7 @@ function initCalculators() {
             desc = "Sizda semizlik darajasi aniqlandi. Sog'lig'ingiz uchun shifokor-dietolog bilan maslahatlashishni tavsiya qilamiz.";
             pointerPos = 90;
         }
-        
+
         document.getElementById('bmi-status').innerText = status;
         document.getElementById('bmi-description').innerText = desc;
         document.getElementById('bmi-gauge-pointer').style.left = `${pointerPos}%`;
@@ -533,21 +756,21 @@ function initCalculators() {
     const btnWater = document.getElementById('btn-calculate-water');
     btnWater.addEventListener('click', () => {
         const weight = parseFloat(document.getElementById('water-weight').value);
-        
+
         if (!weight || weight <= 0) {
             if (tg) tg.showAlert("Iltimos, vazningizni to'g'ri kiriting!");
             else alert("Iltimos, vazningizni to'g'ri kiriting!");
             return;
         }
-        
+
         const minWater = weight * 30; // ml
         const sportWater = minWater + 500;
         const summerWater = minWater + 300;
-        
+
         document.getElementById('water-value').innerText = `${(minWater / 1000).toFixed(1)} Litr`;
         document.getElementById('water-sport').innerText = `${(sportWater / 1000).toFixed(1)} L`;
         document.getElementById('water-summer').innerText = `${(summerWater / 1000).toFixed(1)} L`;
-        
+
         document.getElementById('water-result-card').style.display = 'flex';
 
         // Suv tarixiga saqlash
@@ -563,13 +786,13 @@ function initCalculators() {
         const height = parseFloat(document.getElementById('calorie-height').value);
         const age = parseInt(document.getElementById('calorie-age').value);
         const activity = document.getElementById('calorie-activity').value;
-        
+
         if (!weight || !height || !age || weight <= 0 || height <= 0 || age <= 0) {
             if (tg) tg.showAlert("Iltimos, barcha maydonlarni to'g'ri to'ldiring!");
             else alert("Iltimos, barcha maydonlarni to'g'ri to'ldiring!");
             return;
         }
-        
+
         // Mifflin-St Jeor formula
         let bmr = 0;
         if (gender === 'male') {
@@ -577,20 +800,20 @@ function initCalculators() {
         } else {
             bmr = 10 * weight + 6.25 * height - 5 * age - 161;
         }
-        
+
         // TDEE (Total Daily Energy Expenditure)
         let factor = 1.2;
         if (activity === 'moderate') factor = 1.55;
         else if (activity === 'high') factor = 1.9;
-        
+
         const tdee = bmr * factor;
         const lose = tdee - 500;
         const gain = tdee + 500;
-        
+
         document.getElementById('calorie-value').innerText = `${Math.round(tdee)} kkal`;
         document.getElementById('calorie-lose').innerText = `${Math.round(lose)} kkal`;
         document.getElementById('calorie-gain').innerText = `${Math.round(gain)} kkal`;
-        
+
         document.getElementById('calorie-result-card').style.display = 'flex';
     });
 }
@@ -707,8 +930,8 @@ function initQuiz() {
 }
 
 function updateQuizStats() {
-    const best = parseInt(localStorage.getItem('quiz_best') || '0');
-    const attempts = parseInt(localStorage.getItem('quiz_attempts') || '0');
+    const best = parseInt(SafeStorage.getItem('quiz_best') || '0');
+    const attempts = parseInt(SafeStorage.getItem('quiz_attempts') || '0');
     document.getElementById('quiz-best-score').innerText = best;
     document.getElementById('quiz-attempts').innerText = attempts;
 }
@@ -776,10 +999,10 @@ function handleAnswer(idx, btn) {
 
 function finishQuiz() {
     const score = quizState.score;
-    const best = parseInt(localStorage.getItem('quiz_best') || '0');
-    const attempts = parseInt(localStorage.getItem('quiz_attempts') || '0');
-    if (score > best) localStorage.setItem('quiz_best', score);
-    localStorage.setItem('quiz_attempts', attempts + 1);
+    const best = parseInt(SafeStorage.getItem('quiz_best') || '0');
+    const attempts = parseInt(SafeStorage.getItem('quiz_attempts') || '0');
+    if (score > best) SafeStorage.setItem('quiz_best', score);
+    SafeStorage.setItem('quiz_attempts', attempts + 1);
 
     let icon = '\uD83D\uDE22', title = 'Ko\'proq o\'qing!', desc = 'Hali siz uchun o\'rganish vaqti!';
     if (score >= 80) { icon = '\uD83C\uDFC6'; title = 'Barakallo!'; desc = 'Siz juda yaxshi bilasiz!'; }
@@ -799,24 +1022,30 @@ function finishQuiz() {
 
 function saveHistory(type, data) {
     const key = `history_${type}`;
-    const arr = JSON.parse(localStorage.getItem(key) || '[]');
+    const arr = JSON.parse(SafeStorage.getItem(key) || '[]');
     const now = new Date();
-    const dateStr = `${now.getDate()}.${now.getMonth()+1}.${now.getFullYear()}`;
+    const dateStr = `${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}`;
     arr.push({ date: dateStr, ...data });
     if (arr.length > 30) arr.shift(); // max 30 ta yozuv
-    localStorage.setItem(key, JSON.stringify(arr));
+    SafeStorage.setItem(key, JSON.stringify(arr));
 }
 
 function initHistory() {
     renderHistoryLog();
-    document.getElementById('btn-clear-bmi-history').addEventListener('click', () => {
-        localStorage.removeItem('history_bmi');
-        renderHistoryLog();
-    });
-    document.getElementById('btn-clear-water-history').addEventListener('click', () => {
-        localStorage.removeItem('history_water');
-        renderHistoryLog();
-    });
+    const btnBmi = document.getElementById('btn-clear-bmi-history');
+    if (btnBmi) {
+        btnBmi.addEventListener('click', () => {
+            SafeStorage.removeItem('history_bmi');
+            renderHistoryLog();
+        });
+    }
+    const btnWater = document.getElementById('btn-clear-water-history');
+    if (btnWater) {
+        btnWater.addEventListener('click', () => {
+            SafeStorage.removeItem('history_water');
+            renderHistoryLog();
+        });
+    }
 }
 
 function switchHistoryTab(type) {
@@ -836,7 +1065,7 @@ function renderHistoryLog() {
 }
 
 function renderBmiLog() {
-    const arr = JSON.parse(localStorage.getItem('history_bmi') || '[]').slice().reverse();
+    const arr = JSON.parse(SafeStorage.getItem('history_bmi') || '[]').slice().reverse();
     const log = document.getElementById('bmi-history-log');
     const empty = document.getElementById('bmi-chart-empty');
     log.innerHTML = '';
@@ -855,7 +1084,7 @@ function renderBmiLog() {
 }
 
 function renderWaterLog() {
-    const arr = JSON.parse(localStorage.getItem('history_water') || '[]').slice().reverse();
+    const arr = JSON.parse(SafeStorage.getItem('history_water') || '[]').slice().reverse();
     const log = document.getElementById('water-history-log');
     const empty = document.getElementById('water-chart-empty');
     log.innerHTML = '';
@@ -874,7 +1103,7 @@ function renderWaterLog() {
 function drawChart(type) {
     const canvasId = type === 'bmi' ? 'bmi-chart' : 'water-chart';
     const key = `history_${type}`;
-    const arr = JSON.parse(localStorage.getItem(key) || '[]');
+    const arr = JSON.parse(SafeStorage.getItem(key) || '[]');
     const canvas = document.getElementById(canvasId);
     const ctx = canvas.getContext('2d');
 
@@ -939,3 +1168,1245 @@ function drawChart(type) {
         }
     });
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// BODY MAP FEATURE
+// ═══════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════
+// BODY MAP FEATURE — Medical Scanner with Front & Back Views
+// ═══════════════════════════════════════════════════════════════════
+
+let bodyMapData = null;
+let selectedBodyPartKey = null;
+let currentBodyView = 'front';
+
+const FRONT_BODY_SVG = `
+<svg viewBox="0 0 280 540" class="human-body-svg">
+    <defs>
+        <filter id="glowPart" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#14b8a6" flood-opacity="0.7"/>
+        </filter>
+        <radialGradient id="organGrad" cx="50%" cy="30%" r="70%">
+            <stop offset="0%" stop-color="#14b8a6" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="#0f766e" stop-opacity="0.15"/>
+        </radialGradient>
+    </defs>
+
+    <!-- Head / Bosh -->
+    <g class="body-part" data-part="head" onclick="openBodyMapModal('head')">
+        <rect x="90" y="10" width="100" height="100" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 140 24 C 118 24 106 38 106 62 C 106 82 120 100 134 104 L 146 104 C 160 100 174 82 174 62 C 174 38 162 24 140 24 Z" class="part-shape"/>
+        <circle cx="140" cy="62" r="3.5" fill="#5eead4" class="part-pin"/>
+        <rect x="122" y="54" width="36" height="16" class="part-label-bg"/>
+        <text x="140" y="66" class="part-label">Bosh</text>
+    </g>
+
+    <!-- Neck / Bo'yin -->
+    <g class="body-part" data-part="neck" onclick="openBodyMapModal('neck')">
+        <rect x="110" y="90" width="60" height="40" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 128 104 L 152 104 L 156 122 L 124 122 Z" class="part-shape"/>
+        <circle cx="140" cy="113" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="140" y="116" class="part-label" style="font-size: 8px;">Bo'yin</text>
+    </g>
+
+    <!-- Left Shoulder / Chap Yelka -->
+    <g class="body-part" data-part="left_shoulder" onclick="openBodyMapModal('left_shoulder')">
+        <rect x="60" y="120" width="60" height="40" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 124 122 L 96 126 C 86 130 80 140 82 152 L 102 150 C 108 138 116 130 124 128 Z" class="part-shape"/>
+        <circle cx="90" cy="138" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="64" y="142" class="part-label" style="font-size: 8px;">Yelka</text>
+    </g>
+
+    <!-- Right Shoulder / O'ng Yelka -->
+    <g class="body-part" data-part="right_shoulder" onclick="openBodyMapModal('right_shoulder')">
+        <rect x="160" y="120" width="60" height="40" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 156 122 L 184 126 C 194 130 200 140 198 152 L 178 150 C 172 138 164 130 156 128 Z" class="part-shape"/>
+        <circle cx="190" cy="138" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="216" y="142" class="part-label" style="font-size: 8px;">Yelka</text>
+    </g>
+
+    <!-- Chest / Ko'krak -->
+    <g class="body-part" data-part="chest" onclick="openBodyMapModal('chest')">
+        <rect x="90" y="124" width="100" height="65" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 104 128 C 120 124 160 124 176 128 C 182 144 180 178 174 188 C 158 192 122 192 106 188 C 100 178 98 144 104 128 Z" class="part-shape"/>
+        <circle cx="140" cy="155" r="3.5" fill="#5eead4" class="part-pin"/>
+        <rect x="115" y="146" width="50" height="18" class="part-label-bg"/>
+        <text x="140" y="159" class="part-label">Ko'krak</text>
+    </g>
+
+    <!-- Left Arm / Chap Qo'l -->
+    <g class="body-part" data-part="left_arm" onclick="openBodyMapModal('left_arm')">
+        <rect x="50" y="150" width="50" height="90" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 80 154 L 98 152 L 90 236 L 72 232 Z" class="part-shape"/>
+        <circle cx="82" cy="192" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="56" y="196" class="part-label" style="font-size: 8px;">Qo'l</text>
+    </g>
+
+    <!-- Right Arm / O'ng Qo'l -->
+    <g class="body-part" data-part="right_arm" onclick="openBodyMapModal('right_arm')">
+        <rect x="180" y="150" width="50" height="90" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 200 154 L 182 152 L 190 236 L 208 232 Z" class="part-shape"/>
+        <circle cx="198" cy="192" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="224" y="196" class="part-label" style="font-size: 8px;">Qo'l</text>
+    </g>
+
+    <!-- Abdomen / Qorin -->
+    <g class="body-part" data-part="abdomen" onclick="openBodyMapModal('abdomen')">
+        <rect x="100" y="185" width="80" height="70" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 106 190 C 122 194 158 194 174 190 C 176 216 172 242 168 250 C 154 254 126 254 112 250 C 108 242 104 216 106 190 Z" class="part-shape"/>
+        <circle cx="140" cy="218" r="3.5" fill="#5eead4" class="part-pin"/>
+        <rect x="120" y="209" width="40" height="18" class="part-label-bg"/>
+        <text x="140" y="222" class="part-label">Qorin</text>
+    </g>
+
+    <!-- Left Hand / Chap Kaft -->
+    <g class="body-part" data-part="left_hand" onclick="openBodyMapModal('left_hand')">
+        <rect x="50" y="230" width="45" height="50" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 70 234 L 88 238 C 88 252 82 268 76 270 C 68 268 64 252 70 234 Z" class="part-shape"/>
+        <circle cx="76" cy="254" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="54" y="258" class="part-label" style="font-size: 8px;">Kaft</text>
+    </g>
+
+    <!-- Right Hand / O'ng Kaft -->
+    <g class="body-part" data-part="right_hand" onclick="openBodyMapModal('right_hand')">
+        <rect x="185" y="230" width="45" height="50" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 210 234 L 192 238 C 192 252 198 268 204 270 C 212 268 216 252 210 234 Z" class="part-shape"/>
+        <circle cx="204" cy="254" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="226" y="258" class="part-label" style="font-size: 8px;">Kaft</text>
+    </g>
+
+    <!-- Pelvis / Chanoq -->
+    <g class="body-part" data-part="hip" onclick="openBodyMapModal('hip')">
+        <rect x="100" y="250" width="80" height="45" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 112 252 C 126 256 154 256 168 252 C 174 274 168 290 156 294 L 124 294 C 112 290 106 274 112 252 Z" class="part-shape"/>
+        <circle cx="140" cy="272" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="118" y="264" width="44" height="16" class="part-label-bg"/>
+        <text x="140" y="276" class="part-label" style="font-size: 8.5px;">Chanoq</text>
+    </g>
+
+    <!-- Left Thigh / Chap Son -->
+    <g class="body-part" data-part="left_thigh" onclick="openBodyMapModal('left_thigh')">
+        <rect x="100" y="290" width="40" height="95" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 110 296 L 136 296 L 132 376 L 108 376 C 104 350 106 320 110 296 Z" class="part-shape"/>
+        <circle cx="120" cy="336" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="106" y="328" width="28" height="16" class="part-label-bg"/>
+        <text x="120" y="340" class="part-label" style="font-size: 8px;">Son</text>
+    </g>
+
+    <!-- Right Thigh / O'ng Son -->
+    <g class="body-part" data-part="right_thigh" onclick="openBodyMapModal('right_thigh')">
+        <rect x="140" y="290" width="40" height="95" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 144 296 L 170 296 C 174 320 176 350 172 376 L 148 376 L 144 296 Z" class="part-shape"/>
+        <circle cx="160" cy="336" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="146" y="328" width="28" height="16" class="part-label-bg"/>
+        <text x="160" y="340" class="part-label" style="font-size: 8px;">Son</text>
+    </g>
+
+    <!-- Left Knee / Chap Tizza -->
+    <g class="body-part" data-part="left_knee" onclick="openBodyMapModal('left_knee')">
+        <rect x="100" y="380" width="40" height="30" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <ellipse cx="120" cy="392" rx="13" ry="11" class="part-shape"/>
+        <circle cx="120" cy="392" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="120" y="395" class="part-label" style="font-size: 8px;">Tizza</text>
+    </g>
+
+    <!-- Right Knee / O'ng Tizza -->
+    <g class="body-part" data-part="right_knee" onclick="openBodyMapModal('right_knee')">
+        <rect x="140" y="380" width="40" height="30" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <ellipse cx="160" cy="392" rx="13" ry="11" class="part-shape"/>
+        <circle cx="160" cy="392" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="160" y="395" class="part-label" style="font-size: 8px;">Tizza</text>
+    </g>
+
+    <!-- Left Shin / Chap Boldir -->
+    <g class="body-part" data-part="left_shin" onclick="openBodyMapModal('left_shin')">
+        <rect x="100" y="405" width="40" height="75" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 108 406 L 132 406 L 126 476 L 112 476 Z" class="part-shape"/>
+        <circle cx="119" cy="440" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="103" y="432" width="32" height="16" class="part-label-bg"/>
+        <text x="119" y="444" class="part-label" style="font-size: 8px;">Boldir</text>
+    </g>
+
+    <!-- Right Shin / O'ng Boldir -->
+    <g class="body-part" data-part="right_shin" onclick="openBodyMapModal('right_shin')">
+        <rect x="140" y="405" width="40" height="75" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 148 406 L 172 406 L 168 476 L 154 476 Z" class="part-shape"/>
+        <circle cx="161" cy="440" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="145" y="432" width="32" height="16" class="part-label-bg"/>
+        <text x="161" y="444" class="part-label" style="font-size: 8px;">Boldir</text>
+    </g>
+
+    <!-- Left Foot / Chap Panja -->
+    <g class="body-part" data-part="left_foot" onclick="openBodyMapModal('left_foot')">
+        <rect x="90" y="475" width="45" height="35" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 110 478 L 128 478 L 132 506 L 98 506 Z" class="part-shape"/>
+        <circle cx="114" cy="494" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="114" y="497" class="part-label" style="font-size: 8px;">Panja</text>
+    </g>
+
+    <!-- Right Foot / O'ng Panja -->
+    <g class="body-part" data-part="right_foot" onclick="openBodyMapModal('right_foot')">
+        <rect x="145" y="475" width="45" height="35" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 152 478 L 170 478 L 182 506 L 148 506 Z" class="part-shape"/>
+        <circle cx="166" cy="494" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="166" y="497" class="part-label" style="font-size: 8px;">Panja</text>
+    </g>
+</svg>
+`;
+
+
+const BACK_BODY_SVG = `
+<svg viewBox="0 0 280 540" class="human-body-svg">
+    <!-- Head Back / Bosh ensa -->
+    <g class="body-part" data-part="head" onclick="openBodyMapModal('head')">
+        <rect x="90" y="10" width="100" height="100" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 140 24 C 118 24 106 38 106 62 C 106 82 120 100 134 104 L 146 104 C 160 100 174 82 174 62 C 174 38 162 24 140 24 Z" class="part-shape"/>
+        <circle cx="140" cy="62" r="3.5" fill="#5eead4" class="part-pin"/>
+        <rect x="115" y="54" width="50" height="16" class="part-label-bg"/>
+        <text x="140" y="66" class="part-label">Ensa / Bosh</text>
+    </g>
+
+    <!-- Neck Back / Bo'yin -->
+    <g class="body-part" data-part="neck" onclick="openBodyMapModal('neck')">
+        <rect x="110" y="90" width="60" height="40" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 128 104 L 152 104 L 156 122 L 124 122 Z" class="part-shape"/>
+        <circle cx="140" cy="113" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="140" y="116" class="part-label" style="font-size: 8px;">Bo'yin</text>
+    </g>
+
+    <!-- Left Shoulder Back -->
+    <g class="body-part" data-part="left_shoulder" onclick="openBodyMapModal('left_shoulder')">
+        <rect x="60" y="120" width="60" height="40" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 124 122 L 96 126 C 86 130 80 140 82 152 L 102 150 C 108 138 116 130 124 128 Z" class="part-shape"/>
+        <circle cx="90" cy="138" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="64" y="142" class="part-label" style="font-size: 8px;">Yelka</text>
+    </g>
+
+    <!-- Right Shoulder Back -->
+    <g class="body-part" data-part="right_shoulder" onclick="openBodyMapModal('right_shoulder')">
+        <rect x="160" y="120" width="60" height="40" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 156 122 L 184 126 C 194 130 200 140 198 152 L 178 150 C 172 138 164 130 156 128 Z" class="part-shape"/>
+        <circle cx="190" cy="138" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="216" y="142" class="part-label" style="font-size: 8px;">Yelka</text>
+    </g>
+
+    <!-- Spine / Bel va Orqa -->
+    <g class="body-part" data-part="back" onclick="openBodyMapModal('back')">
+        <rect x="90" y="120" width="100" height="135" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 104 128 C 120 124 160 124 176 128 C 182 156 178 220 172 250 C 156 254 124 254 108 250 C 102 220 98 156 104 128 Z" class="part-shape" style="fill: #115e59; stroke: #2dd4bf; stroke-width: 2;"/>
+        <line x1="140" y1="128" x2="140" y2="250" stroke="#5eead4" stroke-width="2" stroke-dasharray="3 3"/>
+        <circle cx="140" cy="180" r="4.5" fill="#fde047" class="part-pin"/>
+        <rect x="110" y="170" width="60" height="20" class="part-label-bg" style="fill: rgba(15,23,42,0.9); stroke: #fde047; stroke-width: 1.5;"/>
+        <text x="140" y="184" class="part-label" style="fill: #fde047; font-size: 11px;">🔙 Bel / Orqa</text>
+    </g>
+
+    <!-- Left Arm Back -->
+    <g class="body-part" data-part="left_arm" onclick="openBodyMapModal('left_arm')">
+        <rect x="50" y="150" width="50" height="90" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 80 154 L 98 152 L 90 236 L 72 232 Z" class="part-shape"/>
+        <circle cx="82" cy="192" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="56" y="196" class="part-label" style="font-size: 8px;">Qo'l</text>
+    </g>
+
+    <!-- Right Arm Back -->
+    <g class="body-part" data-part="right_arm" onclick="openBodyMapModal('right_arm')">
+        <rect x="180" y="150" width="50" height="90" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 200 154 L 182 152 L 190 236 L 208 232 Z" class="part-shape"/>
+        <circle cx="198" cy="192" r="3" fill="#5eead4" class="part-pin"/>
+        <text x="224" y="196" class="part-label" style="font-size: 8px;">Qo'l</text>
+    </g>
+
+    <!-- Left Hand Back -->
+    <g class="body-part" data-part="left_hand" onclick="openBodyMapModal('left_hand')">
+        <rect x="50" y="230" width="45" height="50" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 70 234 L 88 238 C 88 252 82 268 76 270 C 68 268 64 252 70 234 Z" class="part-shape"/>
+        <circle cx="76" cy="254" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="54" y="258" class="part-label" style="font-size: 8px;">Kaft</text>
+    </g>
+
+    <!-- Right Hand Back -->
+    <g class="body-part" data-part="right_hand" onclick="openBodyMapModal('right_hand')">
+        <rect x="185" y="230" width="45" height="50" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 210 234 L 192 238 C 192 252 198 268 204 270 C 212 268 216 252 210 234 Z" class="part-shape"/>
+        <circle cx="204" cy="254" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="226" y="258" class="part-label" style="font-size: 8px;">Kaft</text>
+    </g>
+
+    <!-- Pelvis / Dumba -->
+    <g class="body-part" data-part="hip" onclick="openBodyMapModal('hip')">
+        <rect x="100" y="250" width="80" height="45" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 112 252 C 126 256 154 256 168 252 C 174 274 168 290 156 294 L 124 294 C 112 290 106 274 112 252 Z" class="part-shape"/>
+        <circle cx="140" cy="272" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="118" y="264" width="44" height="16" class="part-label-bg"/>
+        <text x="140" y="276" class="part-label" style="font-size: 8.5px;">Dumba</text>
+    </g>
+
+    <!-- Left Thigh Back -->
+    <g class="body-part" data-part="left_thigh" onclick="openBodyMapModal('left_thigh')">
+        <rect x="100" y="290" width="40" height="95" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 110 296 L 136 296 L 132 376 L 108 376 C 104 350 106 320 110 296 Z" class="part-shape"/>
+        <circle cx="120" cy="336" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="106" y="328" width="28" height="16" class="part-label-bg"/>
+        <text x="120" y="340" class="part-label" style="font-size: 8px;">Son</text>
+    </g>
+
+    <!-- Right Thigh Back -->
+    <g class="body-part" data-part="right_thigh" onclick="openBodyMapModal('right_thigh')">
+        <rect x="140" y="290" width="40" height="95" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 144 296 L 170 296 C 174 320 176 350 172 376 L 148 376 L 144 296 Z" class="part-shape"/>
+        <circle cx="160" cy="336" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="146" y="328" width="28" height="16" class="part-label-bg"/>
+        <text x="160" y="340" class="part-label" style="font-size: 8px;">Son</text>
+    </g>
+
+    <!-- Left Knee Back -->
+    <g class="body-part" data-part="left_knee" onclick="openBodyMapModal('left_knee')">
+        <rect x="100" y="380" width="40" height="30" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <ellipse cx="120" cy="392" rx="13" ry="11" class="part-shape"/>
+        <circle cx="120" cy="392" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="120" y="395" class="part-label" style="font-size: 8px;">Tizza</text>
+    </g>
+
+    <!-- Right Knee Back -->
+    <g class="body-part" data-part="right_knee" onclick="openBodyMapModal('right_knee')">
+        <rect x="140" y="380" width="40" height="30" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <ellipse cx="160" cy="392" rx="13" ry="11" class="part-shape"/>
+        <circle cx="160" cy="392" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="160" y="395" class="part-label" style="font-size: 8px;">Tizza</text>
+    </g>
+
+    <!-- Left Shin Back -->
+    <g class="body-part" data-part="left_shin" onclick="openBodyMapModal('left_shin')">
+        <rect x="100" y="405" width="40" height="75" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 108 406 L 132 406 L 126 476 L 112 476 Z" class="part-shape"/>
+        <circle cx="119" cy="440" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="103" y="432" width="32" height="16" class="part-label-bg"/>
+        <text x="119" y="444" class="part-label" style="font-size: 8px;">Boldir</text>
+    </g>
+
+    <!-- Right Shin Back -->
+    <g class="body-part" data-part="right_shin" onclick="openBodyMapModal('right_shin')">
+        <rect x="140" y="405" width="40" height="75" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 148 406 L 172 406 L 168 476 L 154 476 Z" class="part-shape"/>
+        <circle cx="161" cy="440" r="3" fill="#5eead4" class="part-pin"/>
+        <rect x="145" y="432" width="32" height="16" class="part-label-bg"/>
+        <text x="161" y="444" class="part-label" style="font-size: 8px;">Boldir</text>
+    </g>
+
+    <!-- Left Foot Back -->
+    <g class="body-part" data-part="left_foot" onclick="openBodyMapModal('left_foot')">
+        <rect x="90" y="475" width="45" height="35" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 110 478 L 128 478 L 132 506 L 98 506 Z" class="part-shape"/>
+        <circle cx="114" cy="494" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="114" y="497" class="part-label" style="font-size: 8px;">Tovon</text>
+    </g>
+
+    <!-- Right Foot Back -->
+    <g class="body-part" data-part="right_foot" onclick="openBodyMapModal('right_foot')">
+        <rect x="145" y="475" width="45" height="35" fill="transparent" class="fat-hotspot" style="cursor:pointer;" />
+        <path d="M 152 478 L 170 478 L 182 506 L 148 506 Z" class="part-shape"/>
+        <circle cx="166" cy="494" r="2.5" fill="#5eead4" class="part-pin"/>
+        <text x="166" y="497" class="part-label" style="font-size: 8px;">Tovon</text>
+    </g>
+</svg>
+`;
+
+async function initBodyMap() {
+    const container = document.getElementById('body-map-container');
+    if (!container) return;
+
+    // Local fallback in case body_map_data.json fails to load
+    const fallbackBodyParts = {
+      head: { title: "🧠 Bosh", icon: "🧠", problems: ["Bosh og'rig'i", "Bosh aylanishi", "Migren", "Charchoq"], tip: "Dam olish, yetarli suyuqlik ichish va ekran vaqtini kamaytirish yordam berishi mumkin." },
+      neck: { title: "🦴 Bo'yin", icon: "🦴", problems: ["Bo'yin og'rig'i", "Mushak zo'riqishi", "Qotish"], tip: "Yengil mashqlar qilish va issiq dush qabul qilish tavsiya etiladi." },
+      chest: { title: "🫁 Ko'krak", icon: "🫁", problems: ["Mushak zo'riqishi", "Ko'krak sohasidagi noqulaylik"], tip: "Chuqur nafas oling va tinchlanishga harakat qiling. Og'riq davom etsa, darhol shifokorga murojaat qiling." },
+      abdomen: { title: "🫃 Qorin", icon: "🫃", problems: ["Qorin og'rig'i", "Dam bo'lish", "Hazm noqulayligi"], tip: "Yengil ovqatlaning va gazli ichimliklardan saqlaning." },
+      hip: { title: "🦴 Chanoq / Dumba", icon: "🦴", problems: ["Og'riq", "Asab siqilishi", "Mushak zo'riqishi"], tip: "Uzoq o'tirmaslikka va vaqti-vaqti bilan yurishga harakat qiling." },
+      thigh: { title: "🦵 Son", icon: "🦵", problems: ["Mushak og'rig'i", "Zo'riqish"], tip: "Yengil massaj va oyoqni balandroq qilib yotish foydali." },
+      knee: { title: "🦿 Tizza", icon: "🦿", problems: ["Tizza og'rig'i", "Zo'riqish"], tip: "Tizzaga og'irlik tushirmang va elastik bint bilan o'rab oling." },
+      shin: { title: "🦴 Boldir", icon: "🦴", problems: ["Mushak og'rig'i", "Zo'riqish", "Charchoq"], tip: "Issiq vanna yoki yengil massaj qiling." },
+      foot: { title: "🦶 Panja / Tovon", icon: "🦶", problems: ["Panja og'rig'i", "Zo'riqish", "Charchoq"], tip: "Poyabzalni yechib, oyoqlarga dam bering." },
+      shoulder: { title: "💪 Yelka", icon: "💪", problems: ["Yelka og'rig'i", "Qotish", "Mushak zo'riqishi"], tip: "Yelkani issiq tuting va og'ir narsa ko'tarmang." },
+      arm: { title: "🤲 Qo'l", icon: "🤲", problems: ["Qo'l og'rig'i", "Charchoq", "Uvishish"], tip: "Qo'lni bo'sh qo'yib, bilak mashqlarini bajaring." },
+      hand: { title: "🖐 Kaft", icon: "🖐", problems: ["Barmoqlar og'rig'i", "Uvishish", "Siqilish"], tip: "Barmoqlarni qisib-yozib mashq qiling." },
+      back: { title: "🔙 Bel va Orqa", icon: "🔙", problems: ["Bel og'rig'i", "Qotish", "Zo'riqish"], tip: "Qattiqroq joyda yotish va og'irlik ko'tarmaslik tavsiya etiladi." }
+    };
+
+    try {
+        const response = await fetch('body_map_data.json?v=' + Date.now());
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        bodyMapData = await response.json();
+        console.log("Loaded body map data successfully:", bodyMapData);
+    } catch (e) {
+        console.warn("Failed to fetch body_map_data.json. Using local fallback.", e);
+        bodyMapData = fallbackBodyParts;
+    }
+
+    renderBodyMap(currentBodyView);
+    populateQuickChips();
+
+    // View Switcher Buttons
+    const btnFront = document.getElementById('btn-view-front');
+    const btnBack = document.getElementById('btn-view-back');
+    const hudViewTag = document.getElementById('scanner-current-view');
+
+    if (btnFront && btnBack) {
+        btnFront.onclick = () => {
+            if (currentBodyView === 'front') return;
+            currentBodyView = 'front';
+            btnFront.classList.add('active');
+            btnBack.classList.remove('active');
+            if (hudViewTag) hudViewTag.textContent = "OLDI TARAFI";
+            renderBodyMap('front');
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+        };
+
+        btnBack.onclick = () => {
+            if (currentBodyView === 'back') return;
+            currentBodyView = 'back';
+            btnBack.classList.add('active');
+            btnFront.classList.remove('active');
+            if (hudViewTag) hudViewTag.textContent = "ORQA TARAFI (BEL)";
+            renderBodyMap('back');
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+        };
+    }
+
+    // Modal Close
+    const closeBtn = document.getElementById('modal-close');
+    const modal = document.getElementById('body-map-modal');
+    if (closeBtn && modal) {
+        closeBtn.onclick = () => {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        };
+        window.onclick = (e) => {
+            if (e.target === modal) {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
+        };
+    }
+
+    // AI Consult Button
+    const aiBtn = document.getElementById('ai-consult-btn');
+    if (aiBtn) {
+        aiBtn.onclick = () => {
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+
+            // Close modal first
+            const modal = document.getElementById('body-map-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.style.display = 'none';
+            }
+
+            // Build part label for bot message
+            const partData = bodyMapData && selectedBodyPartKey ? bodyMapData[selectedBodyPartKey.replace('left_', '').replace('right_', '')] : null;
+            const partLabel = partData ? partData.title.replace(/^[^\w\s\u0400-\u04FF]+/, '').trim() : (selectedBodyPartKey || 'bosh');
+
+            if (tg) {
+                const botUsername = "Birinchiyordam1Bot";
+                const url = `https://t.me/${botUsername}?start=ai_consult_${selectedBodyPartKey || 'head'}`;
+                tg.openTelegramLink(url);
+                tg.close();
+            } else {
+                alert(`AI konsultant: Tana qismi — ${partLabel}\n\nTelegram ilovasi orqali kiring!`);
+            }
+        };
+    }
+}
+
+
+function hasBodyPartClass(target) {
+    if (!target) return false;
+    let cls = '';
+    if (target.getAttribute) {
+        const val = target.getAttribute('class');
+        if (val) {
+            cls = (typeof val === 'object' && val !== null && val.baseVal !== undefined) ? val.baseVal : val;
+        }
+    }
+    if (!cls && target.className) {
+        cls = (typeof target.className === 'object' && target.className.baseVal !== undefined) ? target.className.baseVal : target.className;
+    }
+    if (typeof cls !== 'string') return false;
+    return cls.split(/\s+/).indexOf('body-part') !== -1;
+}
+
+function renderBodyMap(view) {
+    const container = document.getElementById('body-map-container');
+    if (!container) return;
+
+    container.innerHTML = (view === 'back') ? BACK_BODY_SVG : FRONT_BODY_SVG;
+
+    const parts = container.querySelectorAll('.body-part');
+    parts.forEach(function(partEl) {
+        const partKey = partEl.getAttribute('data-part');
+        if (!partKey) return;
+
+        const triggerModal = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log("BODY PART CLICKED:", partKey); // As requested for debugging
+            try {
+                if (tg && tg.HapticFeedback) {
+                    tg.HapticFeedback.selectionChanged();
+                }
+            } catch (hapticErr) {
+                console.warn("Haptic failed:", hapticErr);
+            }
+            openBodyMapModal(partKey);
+        };
+
+        // Desktop click
+        partEl.onclick = triggerModal;
+
+        // Mobile touchend (more responsive on touch screens)
+        partEl.addEventListener('touchend', triggerModal, { passive: false });
+
+        // Make cursor pointer visible
+        partEl.style.cursor = 'pointer';
+    });
+}
+
+function populateQuickChips() {
+    const chipsContainer = document.getElementById('body-quick-chips');
+    if (!chipsContainer || !bodyMapData) return;
+
+    const chipsList = [
+        { key: 'head', icon: '🧠', name: 'Bosh' },
+        { key: 'neck', icon: '🦴', name: "Bo'yin" },
+        { key: 'chest', icon: '🫁', name: "Ko'krak" },
+        { key: 'abdomen', icon: '🫃', name: 'Qorin' },
+        { key: 'back', icon: '🔙', name: 'Bel va Orqa' },
+        { key: 'shoulder', icon: '💪', name: 'Yelka' },
+        { key: 'arm', icon: '🤲', name: "Qo'l" },
+        { key: 'knee', icon: '🦿', name: 'Tizza' },
+        { key: 'foot', icon: '🦶', name: 'Panja' }
+    ];
+
+    chipsContainer.innerHTML = '';
+    chipsList.forEach(item => {
+        const btn = document.createElement('button');
+        btn.className = 'quick-chip';
+        btn.innerHTML = `<span>${item.icon}</span><span>${item.name}</span>`;
+        btn.onclick = () => {
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+            openBodyMapModal(item.key);
+        };
+        chipsContainer.appendChild(btn);
+    });
+}
+
+function openBodyMapModal(partKey) {
+    try {
+        selectedBodyPartKey = partKey;
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+
+        console.log("MODAL OCHISHGA URINISH:", partKey);
+
+        const mapKey = partKey.replace('left_', '').replace('right_', '');
+
+        let data = null;
+        if (bodyMapData) {
+            if (bodyMapData[partKey]) {
+                data = JSON.parse(JSON.stringify(bodyMapData[partKey]));
+            } else if (bodyMapData[mapKey]) {
+                data = JSON.parse(JSON.stringify(bodyMapData[mapKey]));
+                // Set name field if not present
+                if (!data.name) {
+                    // Remove emoji at the beginning for proper title formatting
+                    const cleanTitle = (data.title || mapKey).replace(/^[^\w\s\u0400-\u04FF]+/, '').trim();
+                    data.name = cleanTitle;
+                }
+                // Dynamically add Left/Right prefix to name if needed
+                if (partKey.startsWith('left_')) {
+                    data.name = "Chap " + data.name.toLowerCase();
+                    data.name = data.name.charAt(0).toUpperCase() + data.name.slice(1);
+                } else if (partKey.startsWith('right_')) {
+                    data.name = "O'ng " + data.name.toLowerCase();
+                    data.name = data.name.charAt(0).toUpperCase() + data.name.slice(1);
+                }
+            }
+        }
+
+        if (data) {
+            // Ensure name is cleaned of any starting emojis if present
+            if (!data.name) {
+                data.name = (data.title || partKey).replace(/^[^\w\s\u0400-\u04FF]+/, '').trim();
+            }
+            _openFullModal(partKey, data);
+        } else {
+            // Data not loaded yet or missing
+            console.error("DATA MISSING FOR:", partKey);
+            const statusMsg = bodyMapData ? "topilmadi" : "yuklanmagan";
+            alert(`A'zo ma'lumoti topilmadi (${partKey}). bodyMapData: ${statusMsg}`);
+            if (tg && tg.showAlert) {
+                tg.showAlert("Ma'lumotlar yuklanmoqda yoki topilmadi...");
+            } else {
+                alert("Ma'lumotlar yuklanmoqda yoki topilmadi...");
+            }
+        }
+    } catch (err) {
+        alert("openBodyMapModal Xatoligi: " + err.message + "\nStack: " + err.stack);
+    }
+}
+
+function _openFullModal(partKey, data) {
+    try {
+        const modal = document.getElementById('body-map-modal');
+        const titleEl = document.getElementById('modal-title');
+        const listEl = document.getElementById('modal-diseases-list');
+        const iconEl = document.getElementById('modal-organ-icon');
+
+        if (!modal) {
+            alert("Xatolik: #body-map-modal oynasi HTML ichida topilmadi!");
+            return;
+        }
+
+        // Set title and icon
+        if (titleEl) titleEl.innerText = data.name || partKey;
+        if (iconEl) iconEl.innerText = data.icon || '🩺';
+
+        // Build disease list with tips and urgent badges
+        if (listEl) {
+            listEl.innerHTML = '';
+            
+            // 1. Render diseases list (from JSON)
+            if (data.diseases && data.diseases.length > 0) {
+                data.diseases.forEach(d => {
+                    const li = document.createElement('li');
+                    li.className = 'disease-item' + (d.urgent ? ' disease-urgent' : '');
+                    
+                    li.innerHTML = `
+                        <div class="disease-item-header" style="cursor: pointer;">
+                            <strong>${d.name}</strong>
+                            ${d.urgent ? '<span class="urgent-badge"><i class="fa-solid fa-triangle-exclamation"></i> Tezkor</span>' : ''}
+                            <i class="fa-solid fa-chevron-down toggle-icon" style="color: var(--hint-color); transition: transform 0.2s; font-size: 12px;"></i>
+                        </div>
+                        <div class="disease-details-content" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out;">
+                            <p class="disease-desc" style="margin-top: 8px; margin-bottom: 8px;">${d.desc || ''}</p>
+                            ${d.tip ? `
+                            <div class="disease-tip">
+                                <span class="tip-icon">💡</span>
+                                <span>${d.tip}</span>
+                            </div>` : ''}
+                        </div>
+                    `;
+                    
+                    const header = li.querySelector('.disease-item-header');
+                    const content = li.querySelector('.disease-details-content');
+                    const icon = li.querySelector('.toggle-icon');
+                    
+                    header.onclick = (e) => {
+                        e.stopPropagation();
+                        const isExpanded = content.style.maxHeight !== '0px' && content.style.maxHeight !== '';
+                        
+                        // Close all other expanded items in the list for a clean accordion look
+                        const allContents = listEl.querySelectorAll('.disease-details-content');
+                        const allIcons = listEl.querySelectorAll('.toggle-icon');
+                        allContents.forEach((c, idx) => {
+                            c.style.maxHeight = '0px';
+                            if (allIcons[idx]) allIcons[idx].style.transform = 'rotate(0deg)';
+                        });
+                        
+                        if (!isExpanded) {
+                            content.style.maxHeight = content.scrollHeight + 'px';
+                            icon.style.transform = 'rotate(180deg)';
+                            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                        } else {
+                            content.style.maxHeight = '0px';
+                            icon.style.transform = 'rotate(0deg)';
+                            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                        }
+                    };
+                    
+                    listEl.appendChild(li);
+                });
+            }
+            // 2. Fallback to problems list (from old hardcoded dictionary)
+            else if (data.problems && data.problems.length > 0) {
+                data.problems.forEach(p => {
+                    const li = document.createElement('li');
+                    li.className = 'disease-item';
+                    li.style.padding = '12px 14px';
+                    li.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <div style="width: 6px; height: 6px; border-radius: 50%; background: #14b8a6;"></div>
+                            <span style="font-weight: 600; font-size: 14px;">${p}</span>
+                        </div>
+                    `;
+                    listEl.appendChild(li);
+                });
+            }
+            
+            // 3. Render Tip at the bottom (if not already handled inside individual diseases)
+            if (data.tip && (!data.diseases || data.diseases.length === 0)) {
+                const tipLi = document.createElement('li');
+                tipLi.style.listStyle = 'none';
+                tipLi.style.marginTop = '16px';
+                tipLi.innerHTML = `
+                    <div style="font-size: 13px; color: var(--hint-color); margin-bottom: 6px;">Qisqa tavsiya:</div>
+                    <div style="background: rgba(20,184,166,0.1); border-left: 3px solid #14b8a6; padding: 12px; border-radius: 4px 8px 8px 4px; font-size: 14px; line-height: 1.4;">
+                        ${data.tip}
+                    </div>
+                `;
+                listEl.appendChild(tipLi);
+            }
+        }
+
+        // Animate in
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        // Trigger reflow for animation
+        const mc = modal.querySelector('.body-disease-modal');
+        if (mc) {
+            mc.style.animation = 'none';
+            mc.offsetHeight; // reflow
+            mc.style.animation = '';
+        }
+    } catch (err) {
+        alert("_openFullModal Xatoligi: " + err.message + "\nStack: " + err.stack);
+    }
+}
+
+// Auto init on page load
+document.addEventListener('DOMContentLoaded', () => {
+    try {
+        initBodyMap();
+        initWheelOfFortune();
+    } catch (e) {
+        alert("DOM Init 2 Error: " + e.message + "\nStack: " + e.stack);
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// OMAD BARABANI (Wheel of Fortune) — Luxury Casino-Grade Engine
+// ═══════════════════════════════════════════════════════════════════
+let isSpinning = false;
+let hasSpunThisSession = false;
+
+function initWheelOfFortune() {
+    const openBtn = document.getElementById('btn-open-wheel');
+    const closeBtn = document.getElementById('wheel-modal-close');
+    const modal = document.getElementById('wheel-modal');
+    const spinBtn = document.getElementById('btn-spin-wheel');
+    const resultMsg = document.getElementById('wheel-result-msg');
+    const canvas = document.getElementById('wheel-canvas');
+
+    if (!openBtn || !closeBtn || !modal || !spinBtn || !canvas) return;
+
+    generateLedLights();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const lastSpin = urlParams.get('last_spin');
+    const serverPrize = parseInt(urlParams.get('prize') || '1');
+    const centerText = spinBtn.querySelector('.wheel-center-text');
+
+    let remainingTimeMs = 0;
+
+    // Get the most recent spin time from either URL parameter or localStorage
+    let effectiveLastSpin = lastSpin;
+    const localLastSpin = SafeStorage.getItem('last_spin_time');
+    if (localLastSpin) {
+        if (!effectiveLastSpin) {
+            effectiveLastSpin = localLastSpin;
+        } else {
+            // Compare which one is more recent
+            const tParam = new Date(effectiveLastSpin).getTime();
+            const tLocal = new Date(localLastSpin).getTime();
+            if (!isNaN(tLocal) && (isNaN(tParam) || tLocal > tParam)) {
+                effectiveLastSpin = localLastSpin;
+            }
+        }
+    }
+
+    if (effectiveLastSpin) {
+        if (effectiveLastSpin.includes('T') || effectiveLastSpin.includes(':')) {
+            const lastSpinTime = new Date(effectiveLastSpin).getTime();
+            if (!isNaN(lastSpinTime)) {
+                const cooldownMs = 24 * 60 * 60 * 1000;
+                const elapsedMs = Date.now() - lastSpinTime;
+                remainingTimeMs = cooldownMs - elapsedMs;
+            }
+        } else {
+            // Fallback for YYYY-MM-DD
+            const nowUz = new Date(Date.now() + (5 * 60 * 60 * 1000) + (new Date().getTimezoneOffset() * 60 * 1000));
+            const todayStrUz = nowUz.toISOString().split('T')[0];
+            if (effectiveLastSpin === todayStrUz) {
+                const tomorrowMidnight = new Date(effectiveLastSpin + 'T23:59:59+05:00').getTime();
+                remainingTimeMs = tomorrowMidnight - Date.now();
+            }
+        }
+    }
+
+    let countdownInterval = null;
+    function startCountdown(durationMs) {
+        if (countdownInterval) clearInterval(countdownInterval);
+        const endTime = Date.now() + durationMs;
+
+        function updateTimer() {
+            const timeLeft = endTime - Date.now();
+            if (timeLeft <= 0) {
+                clearInterval(countdownInterval);
+                spinBtn.disabled = false;
+                if (centerText) centerText.textContent = "AYLANTIR";
+                resultMsg.classList.add('hidden');
+                return;
+            }
+
+            const hours = Math.floor(timeLeft / (3600 * 1000));
+            const minutes = Math.floor((timeLeft % (3600 * 1000)) / (60 * 1000));
+            const seconds = Math.floor((timeLeft % (60 * 1000)) / 1000);
+
+            const timerEl = document.getElementById('wheel-countdown-timer');
+            if (timerEl) {
+                timerEl.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }
+        }
+
+        updateTimer();
+        countdownInterval = setInterval(updateTimer, 1000);
+    }
+
+    if (remainingTimeMs > 0) {
+        spinBtn.disabled = true;
+        if (centerText) centerText.textContent = "KUTISH";
+        resultMsg.innerHTML = '<div class="result-icon">🕒</div><p class="result-title">Urinish tugadi</p><p class="result-desc">Keyingi bepul aylantirishgacha qolgan vaqt:</p><div class="wheel-countdown" id="wheel-countdown-timer" style="font-size: 24px; font-weight: 800; color: #fde047; margin: 10px 0; letter-spacing: 1px;">23:59:59</div>';
+        resultMsg.classList.remove('hidden');
+        startCountdown(remainingTimeMs);
+    }
+
+    // Query Telegram CloudStorage for cross-device & cookie-independent state
+    if (tg && tg.CloudStorage) {
+        tg.CloudStorage.getItem('last_spin_time', (err, value) => {
+            if (!err && value) {
+                const lastSpinTime = new Date(value).getTime();
+                if (!isNaN(lastSpinTime)) {
+                    const cooldownMs = 24 * 60 * 60 * 1000;
+                    const elapsedMs = Date.now() - lastSpinTime;
+                    const remaining = cooldownMs - elapsedMs;
+                    if (remaining > remainingTimeMs) {
+                        remainingTimeMs = remaining;
+                        spinBtn.disabled = true;
+                        if (centerText) centerText.textContent = "KUTISH";
+                        resultMsg.innerHTML = '<div class="result-icon">🕒</div><p class="result-title">Urinish tugadi</p><p class="result-desc">Keyingi bepul aylantirishgacha qolgan vaqt:</p><div class="wheel-countdown" id="wheel-countdown-timer" style="font-size: 24px; font-weight: 800; color: #fde047; margin: 10px 0; letter-spacing: 1px;">23:59:59</div>';
+                        resultMsg.classList.remove('hidden');
+                        startCountdown(remaining);
+                    }
+                }
+            }
+        });
+    }
+
+    function checkWheelStateAndOpen() {
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        drawWheel();
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+
+        if (remainingTimeMs > 0 || hasSpunThisSession) {
+            spinBtn.disabled = true;
+            if (centerText) centerText.textContent = "KUTISH";
+            resultMsg.innerHTML = '<div class="result-icon">🕒</div><p class="result-title">Urinish tugadi</p><p class="result-desc">Keyingi bepul aylantirishgacha qolgan vaqt:</p><div class="wheel-countdown" id="wheel-countdown-timer" style="font-size: 24px; font-weight: 800; color: #fde047; margin: 10px 0; letter-spacing: 1px;">23:59:59</div>';
+            resultMsg.classList.remove('hidden');
+            const timeToUse = remainingTimeMs > 0 ? remainingTimeMs : 24 * 60 * 60 * 1000;
+            startCountdown(timeToUse);
+        }
+    }
+
+    // Modal open
+    openBtn.onclick = () => {
+        checkWheelStateAndOpen();
+    };
+
+    // Also open when clicking promo card
+    const promoCard = document.getElementById('wheel-promo-card');
+    if (promoCard) {
+        promoCard.onclick = (e) => {
+            if (e.target.closest('.wheel-promo-btn') || e.target === openBtn) return;
+            checkWheelStateAndOpen();
+        };
+    }
+
+    closeBtn.onclick = () => {
+        if (!isSpinning) {
+            modal.classList.add('hidden');
+            modal.style.display = 'none';
+        }
+    };
+
+    // Segments — vibrant luxury palette
+    const segments = [
+        { text: "+1", label: "ball", points: 1, bg: "#0d9488", emoji: "💊" },
+        { text: "+3", label: "ball", points: 3, bg: "#0284c7", emoji: "💉" },
+        { text: "+5", label: "ball", points: 5, bg: "#0f766e", emoji: "🩺" },
+        { text: "+1", label: "ball", points: 1, bg: "#10b981", emoji: "🧬" },
+        { text: "+10", label: "ball", points: 10, bg: "#d97706", emoji: "⭐" },
+        { text: "SUPER", label: "PRIZ", points: 0, bg: "#dc2626", emoji: "🏆" },
+        { text: "+1", label: "ball", points: 1, bg: "#0284c7", emoji: "💊" },
+        { text: "+3", label: "ball", points: 3, bg: "#10b981", emoji: "💉" },
+        { text: "+5", label: "ball", points: 5, bg: "#0d9488", emoji: "🩺" },
+        { text: "+10", label: "ball", points: 10, bg: "#d97706", emoji: "⭐" }
+    ];
+
+    function drawWheel() {
+        const ctx = canvas.getContext('2d');
+        const size = canvas.width;
+        const r = size / 2;
+        const arc = (Math.PI * 2) / segments.length;
+
+        ctx.clearRect(0, 0, size, size);
+
+        for (let i = 0; i < segments.length; i++) {
+            const startAngle = i * arc;
+            const endAngle = startAngle + arc;
+            const seg = segments[i];
+
+            // Segment fill with radial gradient
+            const grad = ctx.createRadialGradient(r, r, 0, r, r, r);
+            grad.addColorStop(0, lightenColor(seg.bg, 25));
+            grad.addColorStop(0.85, seg.bg);
+            grad.addColorStop(1, darkenColor(seg.bg, 20));
+
+            ctx.beginPath();
+            ctx.moveTo(r, r);
+            ctx.arc(r, r, r - 2, startAngle, endAngle);
+            ctx.closePath();
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Segment borders
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Text and emoji inside segment
+            ctx.save();
+            ctx.translate(r, r);
+            ctx.rotate(startAngle + arc / 2);
+
+            // Emoji
+            ctx.font = '20px serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(seg.emoji, r * 0.65, 0);
+
+            // Points text
+            ctx.font = "bold 16px 'Outfit', sans-serif";
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 4;
+            ctx.textAlign = 'center';
+            ctx.fillText(seg.text, r * 0.40, -5);
+
+            // Label text
+            ctx.font = "600 9px 'Outfit', sans-serif";
+            ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            ctx.fillText(seg.label, r * 0.40, 9);
+
+            ctx.restore();
+        }
+
+        // Center shadow ring
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(r, r, 42, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fill();
+        ctx.restore();
+    }
+
+    function lightenColor(hex, percent) {
+        const num = parseInt(hex.replace('#', ''), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = Math.min(255, (num >> 16) + amt);
+        const G = Math.min(255, ((num >> 8) & 0x00FF) + amt);
+        const B = Math.min(255, (num & 0x0000FF) + amt);
+        return `rgb(${R},${G},${B})`;
+    }
+
+    function darkenColor(hex, percent) {
+        const num = parseInt(hex.replace('#', ''), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = Math.max(0, (num >> 16) - amt);
+        const G = Math.max(0, ((num >> 8) & 0x00FF) - amt);
+        const B = Math.max(0, (num & 0x0000FF) - amt);
+        return `rgb(${R},${G},${B})`;
+    }
+
+    function generateLedLights() {
+        const container = document.getElementById('wheel-led-lights');
+        if (!container || container.children.length > 0) return;
+
+        const count = 16;
+        const radius = 146; // px from center
+        const center = 152;
+
+        for (let i = 0; i < count; i++) {
+            const angle = (i * 360 / count) * (Math.PI / 180);
+            const x = center + radius * Math.cos(angle);
+            const y = center + radius * Math.sin(angle);
+
+            const led = document.createElement('div');
+            led.className = 'wheel-led';
+            led.style.left = `${x}px`;
+            led.style.top = `${y}px`;
+            led.style.animationDelay = `${(i % 2) * 0.6}s`;
+            container.appendChild(led);
+        }
+    }
+
+    // Spin handler
+    spinBtn.onclick = () => {
+        if (isSpinning || hasSpunThisSession || remainingTimeMs > 0) return;
+
+        isSpinning = true;
+        spinBtn.disabled = true;
+        if (centerText) centerText.textContent = "...";
+        resultMsg.classList.add('hidden');
+
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+
+        // Use server-side pre-generated prize
+        const winningPoints = serverPrize;
+
+        const eligible = [];
+        for (let i = 0; i < segments.length; i++) {
+            if (segments[i].points === winningPoints) eligible.push(i);
+        }
+
+        const winIdx = eligible[Math.floor(Math.random() * eligible.length)];
+        const segArc = 360 / segments.length;
+        const target = 270 - (winIdx * segArc + segArc / 2);
+        const finalAngle = 8 * 360 + target;
+
+        canvas.style.transition = 'transform 5.2s cubic-bezier(0.12, 0.7, 0.1, 1)';
+        canvas.style.transform = `rotate(${finalAngle}deg)`;
+
+        // Periodic click haptic while spinning
+        let spinHapticInterval = setInterval(() => {
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+        }, 300);
+
+        setTimeout(() => clearInterval(spinHapticInterval), 4000);
+
+        setTimeout(() => {
+            isSpinning = false;
+            hasSpunThisSession = true;
+            SafeStorage.setItem('last_spin_time', new Date().toISOString());
+            if (tg && tg.CloudStorage) {
+                tg.CloudStorage.setItem('last_spin_time', new Date().toISOString());
+            }
+
+            spinBtn.disabled = true;
+            if (centerText) centerText.textContent = "ERTAGA";
+
+            if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+
+            // Fire Confetti!
+            fireConfetti();
+
+            let icon, title, desc, btnText;
+            if (winningPoints === 0) {
+                icon = "🏆";
+                title = "SUPER PRIZ!";
+                desc = "1 oylik Premium obunani 30 Stars o'rniga <b>atigi 20 Stars</b> evaziga olish chegirmasini yutib oldingiz!";
+                btnText = "Prizni Tasdiqlash 🎁";
+            } else {
+                icon = "🎉";
+                title = `+${winningPoints} ball yutdingiz!`;
+                desc = "Ballarni hisobingizga qo'shish va saqlash uchun tasdiqlang.";
+                btnText = "Hisobga qo'shish ✅";
+            }
+
+            resultMsg.innerHTML = `
+                <div class="result-icon">${icon}</div>
+                <p class="result-title">${title}</p>
+                <p class="result-desc">${desc}</p>
+                <button class="result-confirm-btn" id="btn-confirm-spin">${btnText}</button>
+            `;
+            resultMsg.classList.remove('hidden');
+
+            document.getElementById('btn-confirm-spin').onclick = () => {
+                if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+                if (tg) {
+                    const botUsername = "Birinchiyordam1Bot";
+                    const pv = (winningPoints === 0) ? "super" : winningPoints;
+                    tg.openTelegramLink(`https://t.me/${botUsername}?start=spin_${pv}`);
+                    tg.close();
+                } else {
+                    alert("Telegram orqali tasdiqlang!");
+                }
+            };
+        }, 5300);
+    };
+
+    // Auto-open wheel if specified in URL params
+    const page = urlParams.get('page');
+    if (page === 'wheel') {
+        checkWheelStateAndOpen();
+    }
+}
+
+// Confetti Particle Explosion Engine
+function fireConfetti() {
+    const canvas = document.getElementById('wheel-confetti-canvas');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const particles = [];
+    const colors = ['#fde047', '#14b8a6', '#38bdf8', '#f43f5e', '#a855f7', '#22c55e', '#ffffff'];
+
+    for (let i = 0; i < 90; i++) {
+        particles.push({
+            x: canvas.width / 2,
+            y: canvas.height * 0.45,
+            vx: (Math.random() - 0.5) * 16,
+            vy: (Math.random() - 0.7) * 18,
+            size: Math.random() * 8 + 4,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            rotation: Math.random() * 360,
+            rSpeed: (Math.random() - 0.5) * 12,
+            opacity: 1,
+            gravity: 0.35
+        });
+    }
+
+    let animationFrame;
+    const startTime = Date.now();
+
+    function renderConfetti() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let activeCount = 0;
+        particles.forEach(p => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += p.gravity;
+            p.vx *= 0.98;
+            p.rotation += p.rSpeed;
+            p.opacity -= 0.008;
+
+            if (p.opacity > 0) {
+                activeCount++;
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                ctx.rotate((p.rotation * Math.PI) / 180);
+                ctx.globalAlpha = Math.max(0, p.opacity);
+                ctx.fillStyle = p.color;
+                ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+                ctx.restore();
+            }
+        });
+
+        if (activeCount > 0 && Date.now() - startTime < 4000) {
+            animationFrame = requestAnimationFrame(renderConfetti);
+        } else {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            cancelAnimationFrame(animationFrame);
+        }
+    }
+
+    renderConfetti();
+}
+
+
+
+
+// DAILY BONUS LOGIC
+document.addEventListener('DOMContentLoaded', () => {
+    const btnOpenDailyBonus = document.getElementById('btn-open-daily-bonus');
+    const modal = document.getElementById('daily-bonus-modal');
+    const btnClose = document.getElementById('daily-bonus-close');
+    const btnClaim = document.getElementById('btn-claim-daily-bonus');
+    const grid = document.getElementById('daily-bonus-grid');
+    const currentScoreEl = document.getElementById('daily-bonus-current-score');
+    
+    if (!btnOpenDailyBonus || !modal) return;
+    
+    // Parse URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const streak = parseInt(urlParams.get('streak') || '1');
+    const dailyClaimed = urlParams.get('daily_claimed') === '1';
+    const userScore = urlParams.get('score') || '0';
+    
+    if(currentScoreEl) {
+        currentScoreEl.textContent = userScore;
+    }
+    
+    // Render Grid
+    function renderGrid() {
+        if(!grid) return;
+        grid.innerHTML = '';
+        const rewards = [1, 2, 3, 3, 3, 3, 20];
+        
+        for (let i = 1; i <= 7; i++) {
+            const isDay7 = i === 7;
+            const isCurrent = i === streak;
+            const isPast = i < streak || (i === streak && dailyClaimed);
+            
+            const card = document.createElement('div');
+            let classes = ['daily-bonus-card'];
+            if(isDay7) classes.push('day-7');
+            if(isCurrent && !dailyClaimed) classes.push('active');
+            if(isPast) classes.push('claimed');
+            
+            card.className = classes.join(' ');
+            
+            let iconClass = 'fa-solid fa-star star-icon';
+            if (isDay7) iconClass = 'fa-solid fa-gift star-icon';
+            
+            card.innerHTML = `
+                <i class="fa-solid fa-circle-check check-icon"></i>
+                <div class="day-label">${i}-kun</div>
+                <i class="${iconClass}"></i>
+                <div class="points-label">${rewards[i-1]} ball</div>
+                ${isDay7 ? '<div class="big-bonus-label">Katta bonus!</div>' : ''}
+            `;
+            grid.appendChild(card);
+        }
+        
+        if (dailyClaimed) {
+            btnClaim.style.opacity = '0.5';
+            btnClaim.style.cursor = 'not-allowed';
+            btnClaim.querySelector('.wheel-center-text').textContent = '✅ Bugungi bonus olindi';
+            btnClaim.onclick = null;
+        } else {
+            btnClaim.onclick = () => {
+                if (window.Telegram && window.Telegram.WebApp) {
+                    const botUsername = "Birinchiyordam1Bot";
+                    window.Telegram.WebApp.openTelegramLink(`https://t.me/${botUsername}?start=claim_daily`);
+                    window.Telegram.WebApp.close();
+                } else {
+                    alert('Faqat Telegram ichida ishlaydi!');
+                }
+            };
+        }
+    }
+    
+    btnOpenDailyBonus.onclick = () => {
+        renderGrid();
+        modal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+    };
+    
+    btnClose.onclick = () => {
+        modal.classList.add('hidden');
+        document.body.style.overflow = 'auto';
+    };
+    
+    // Allow clicking outside the modal content to close it
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            btnClose.onclick();
+        }
+    });
+});

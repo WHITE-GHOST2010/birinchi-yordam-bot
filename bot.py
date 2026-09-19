@@ -3,6 +3,7 @@ import os
 import logging
 import re
 import html
+import json
 from datetime import datetime, time, timedelta
 from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
 from aiogram.filters import Command, StateFilter
@@ -12,6 +13,49 @@ from aiogram.types import (
     LabeledPrice, ContentType, TelegramObject
 )
 from typing import Callable, Dict, Any, Awaitable
+import time
+
+class ThrottlingMiddleware(BaseMiddleware):
+    def __init__(self, cooldown: float = 1.0):
+        self.cooldown = cooldown
+        self.last_requests = {}
+        self.last_warnings = {}
+        super().__init__()
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any]
+    ) -> Any:
+        user = data.get("event_from_user")
+        if user:
+            user_id = user.id
+            now = time.time()
+            last_time = self.last_requests.get(user_id, 0)
+            
+            if now - last_time < self.cooldown:
+                # Limit exceeded
+                last_warn = self.last_warnings.get(user_id, 0)
+                if now - last_warn > 3.0:
+                    self.last_warnings[user_id] = now
+                    if isinstance(event, types.Message):
+                        try:
+                            await event.answer(
+                                "⚠️ <b>Iltimos, shoshilmang!</b> Bot faoliyatini himoya qilish uchun so'rovlar oralig'i kamida 1 soniya bo'lishi kerak. 🕒",
+                                parse_mode="HTML"
+                            )
+                        except Exception:
+                            pass
+                    elif isinstance(event, types.CallbackQuery):
+                        try:
+                            await event.answer("⚠️ Iltimos, shoshilmang! Biroz kuting. 🕒", show_alert=True)
+                        except Exception:
+                            pass
+                return # Stop processing
+                
+            self.last_requests[user_id] = now
+        return await handler(event, data)
 
 class BanMiddleware(BaseMiddleware):
     async def __call__(
@@ -22,7 +66,7 @@ class BanMiddleware(BaseMiddleware):
     ) -> Any:
         user = data.get("event_from_user")
         if user:
-            is_banned, ban_msg = database.is_user_banned(user.id)
+            is_banned, ban_msg = await asyncio.to_thread(database.is_user_banned, user.id)
             if is_banned:
                 contact_info = f"Murojaat uchun: @{ADMIN_USERNAME}" if (ADMIN_USERNAME and ADMIN_USERNAME != "YOUR_ADMIN_USERNAME") else "Murojaat uchun administratorga yozing."
                 if isinstance(event, types.Message):
@@ -40,6 +84,21 @@ class BanMiddleware(BaseMiddleware):
                 return
         return await handler(event, data)
 
+class AnswerCallbackMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any]
+    ) -> Any:
+        result = await handler(event, data)
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer()
+            except Exception:
+                pass
+        return result
+
 class FsmResetMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -50,16 +109,19 @@ class FsmResetMiddleware(BaseMiddleware):
         if isinstance(event, types.Message) and event.text:
             skip_texts = [
                 "📋 Holatlar ro'yxati", "🚨 Favqulodda raqamlar",
-                "📚 Kasalliklar Ro'yxati (100+)", "💬 AI Konsultatsiya (Chat)",
-                "🏥 Eng yaqin kasalxona", "💎 Premium olish",
+                "📚 Kasalliklar", "💬 AI Konsultatsiya", "💬 AI Konsultatsiya (Chat)",
+                "🏥 Yaqin kasalxona", "💎 Premium",
                 "👤 Tibbiy Profilim", "💊 Dori Eslatmalari",
-                "⚖️ Sog'liq Kalkulyatori", "🔔 Kunlik Maslahatlar"
+                "⚖️ Sog'liq Kalkulyatori", "🔔 Kunlik Maslahatlar",
+                "👥 Do'stlarni taklif qilish", "🌐 Mening ballarim"
             ]
             if event.text in skip_texts or event.text.startswith('/'):
                 state = data.get("state")
                 if state:
                     await state.clear()
         return await handler(event, data)
+
+    # DailyBonusMiddleware has been removed
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -121,6 +183,26 @@ PROVIDER_TOKEN      = os.getenv("PROVIDER_TOKEN", "")  # Feature 6: To'lov uchun
 MINI_APP_URL        = os.getenv("MINI_APP_URL", "")
 PREMIUM_STARS_PRICE = int(os.getenv("PREMIUM_STARS_PRICE", "50"))  # Stars narxi (default: 50 ⭐)
 
+# ═══════════════════════════════════════════════════════════════
+# ILOVA VERSIYASI
+# Muhim yangilashlar bo'lganda shu raqamni oshiring.
+# Bu versiya Mini App URL parametri sifatida ishlatiladi.
+# ═══════════════════════════════════════════════════════════════
+APP_VERSION = "1.1.0"
+
+# ═══════════════════════════════════════════════════════════════
+# AI TA'MIR REJIMI
+# AI ni vaqtincha o'chirish uchun: AI_MAINTENANCE = True
+# AI ni yoqish uchun: AI_MAINTENANCE = False
+# ═══════════════════════════════════════════════════════════════
+AI_MAINTENANCE = os.getenv("AI_MAINTENANCE", "false").lower() == "true"
+
+AI_MAINTENANCE_MSG = (
+    "⚙️ <b>AI xizmati vaqtincha to'xtatildi.</b>\n\n"
+    "Texnik yangilanish davom etmoqda... 🔄\n\n"
+    "⏳ Tez orada yana ishga tushadi. Sabr qilganingiz uchun rahmat!"
+)
+
 
 if not TOKEN or TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
     raise ValueError("Iltimos, .env fayliga haqiqiy BOT_TOKEN ni kiriting!")
@@ -148,6 +230,7 @@ class MedicalProfileStates(StatesGroup):
 class ReminderStates(StatesGroup):
     medicine_name = State()
     times         = State()
+    days          = State()  # 'daily' yoki 'every_other'
 
 class BmiStates(StatesGroup):
     weight = State()
@@ -162,6 +245,10 @@ class AiChatStates(StatesGroup):
 class PaymentStates(StatesGroup):
     waiting_for_receipt = State()
 
+class BroadcastStates(StatesGroup):
+    waiting_for_content = State()
+    waiting_for_confirmation = State()
+
 # ═══════════════════════════════════════════════════════════════════
 # GEMINI AI
 # ═══════════════════════════════════════════════════════════════════
@@ -175,9 +262,16 @@ GEMINI_SYSTEM_INSTRUCTION = (
 )
 
 GEMINI_MODELS = [
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
+]
+
+# Audio va rasm uchun multimodal modellar (gemini-2.5 yaxshi qo'llab-quvvatlaydi)
+GEMINI_MULTIMODAL_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash",
 ]
 
 async def _try_generate(prompt: str, model: str) -> str:
@@ -212,16 +306,32 @@ def _handle_gemini_error(e: Exception) -> str:
     error_msg = str(e)
     logging.error(f"Gemini API xatoligi: {error_msg[:300]}")
     if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-        return "⏳ AI so'rovlar limiti oshib ketdi. 30 soniya kutib, qayta yuboring.\n\n📞 Favqulodda: 103 (Tez yordam)"
+        return (
+            "🤖 AI konsultatsiyasi hozircha vaqtincha mavjud emas.\n"
+            "Texnik sababga ko'ra AI hozir javob bera olmayapti.\n"
+            "⏳ Bir ozdan so'ng qayta urinib ko'ring.\n\n"
+            "🙏 Tushunganingiz uchun rahmat!"
+        )
     elif "API_KEY_INVALID" in error_msg or "INVALID_ARGUMENT" in error_msg or "400" in error_msg:
-        return "❌ AI kaliti xato. Administrator bilan bog'laning.\n\n📞 Favqulodda: 103 (Tez yordam)"
+        return (
+            "🤖 AI konsultatsiyasi hozircha vaqtincha mavjud emas.\n"
+            "Texnik sababga ko'ra AI hozir javob bera olmayapti.\n"
+            "⏳ Bir ozdan so'ng qayta urinib ko'ring.\n\n"
+            "🙏 Tushunganingiz uchun rahmat!"
+        )
     elif "timeout" in error_msg.lower() or "connection" in error_msg.lower():
-        return "⏳ Internet aloqasi sekin. Biroz kutib, qayta yuboring.\n\n📞 Favqulodda: 103 (Tez yordam)"
+        return (
+            "🤖 AI konsultatsiyasi hozircha vaqtincha mavjud emas.\n"
+            "Texnik sababga ko'ra AI hozir javob bera olmayapti.\n"
+            "⏳ Bir ozdan so'ng qayta urinib ko'ring.\n\n"
+            "🙏 Tushunganingiz uchun rahmat!"
+        )
     else:
         return (
-            "😔 AI vaqtincha ishlamayapti. Bir oz kutib qayta yuboring.\n\n"
-            "📞 Shu orada favqulodda raqamlar:\n"
-            "🚑 Tez tibbiy yordam: **103**\n🚒 Yong'in: **101**\n👮 Militsiya: **102**"
+            "🤖 AI konsultatsiyasi hozircha vaqtincha mavjud emas.\n"
+            "Texnik sababga ko'ra AI hozir javob bera olmayapti.\n"
+            "⏳ Bir ozdan so'ng qayta urinib ko'ring.\n\n"
+            "🙏 Tushunganingiz uchun rahmat!"
         )
 
 async def stream_gemini_to_message(
@@ -244,7 +354,7 @@ async def stream_gemini_to_message(
     for model in GEMINI_MODELS:
         full_text = ""
         last_edit_time = asyncio.get_event_loop().time()
-        edit_interval = 1.5
+        edit_interval = 3.0
         min_chars_before_edit = 80
         chars_since_last_edit = 0
 
@@ -302,6 +412,32 @@ async def stream_gemini_to_message(
         pass
     return fallback_text
 
+async def get_web_app_url(user_id: int, page: str = None) -> str:
+    if not MINI_APP_URL:
+        return ""
+    
+    import urllib.parse
+    
+    # Fetch score asynchronously
+    score = await asyncio.to_thread(database.get_score, user_id)
+    
+    params = {
+        "v": APP_VERSION,
+        "score": score
+    }
+    if page:
+        params["page"] = page
+        
+    prize = await asyncio.to_thread(database.generate_or_get_spin_prize, user_id)
+    if prize is not None:
+        params["prize"] = prize
+        
+    bonus_info = await asyncio.to_thread(database.get_daily_bonus_info, user_id)
+    params["streak"] = bonus_info["streak"]
+    params["daily_claimed"] = "1" if bonus_info["is_claimed_today"] else "0"
+        
+    return f"{MINI_APP_URL}?{urllib.parse.urlencode(params)}"
+
 # ═══════════════════════════════════════════════════════════════════
 # KLAVIATURALAR (KEYBOARDS)
 # ═══════════════════════════════════════════════════════════════════
@@ -312,23 +448,26 @@ def get_start_keyboard():
         keyboard=[
             [
                 KeyboardButton(text="📋 Holatlar ro'yxati"),
+                KeyboardButton(text="📚 Kasalliklar")
+            ],
+            [
+                KeyboardButton(text="💬 AI Konsultatsiya (Chat)"),
                 KeyboardButton(text="🚨 Favqulodda raqamlar")
             ],
             [
-                KeyboardButton(text="📚 Kasalliklar Ro'yxati (100+)"),
-                KeyboardButton(text="💬 AI Konsultatsiya (Chat)")
-            ],
-            [
-                KeyboardButton(text="🏥 Eng yaqin kasalxona"),
-                KeyboardButton(text="💎 Premium olish")
-            ],
-            [
-                KeyboardButton(text="👤 Tibbiy Profilim"),
+                KeyboardButton(text="🏥 Yaqin kasalxona"),
                 KeyboardButton(text="💊 Dori Eslatmalari")
             ],
             [
-                KeyboardButton(text="⚖️ Sog'liq Kalkulyatori"),
+                KeyboardButton(text="👤 Tibbiy Profilim"),
                 KeyboardButton(text="🔔 Kunlik Maslahatlar")
+            ],
+            [
+                KeyboardButton(text="💎 Premium"),
+                KeyboardButton(text="👥 Do'stlarni taklif qilish")
+            ],
+            [
+                KeyboardButton(text="🌐 Mening ballarim")
             ],
         ],
         resize_keyboard=True,
@@ -362,7 +501,8 @@ def get_back_to_main_keyboard():
 def get_location_keyboard():
     builder = ReplyKeyboardBuilder()
     builder.button(text="📍 Joylashuvni yuborish", request_location=True)
-    builder.adjust(1)
+    builder.button(text="❌ Bekor qilish")
+    builder.adjust(1, 1)
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=True)
 
 def get_diseases_keyboard(page: int = 1):
@@ -386,7 +526,7 @@ def get_diseases_keyboard(page: int = 1):
 
 def get_premium_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.button(text="💎 Premium olish", callback_data="buy_premium")
+    builder.button(text="💎 Premium", callback_data="buy_premium")
     return builder.as_markup()
 
 # ═══════════════════════════════════════════════════════════════════
@@ -397,6 +537,10 @@ async def premium_upsell(event):
     text = (
         "🛑 <b>Bepul AI so'rovlar limiti tugadi!</b>\n\n"
         "AI bilan cheksiz ishlash uchun <b>Premium</b> xarid qiling.\n\n"
+        "🎁 <b>Bepul Premium olish yo'li:</b>\n"
+        "• 🔥 Har kuni botga kirib, kunlik bonus to'plang (1, 2, 3... ball)!\n"
+        "• 👥 Do'stingizni taklif qiling: <b>+10 ball</b> (5 ta do'st uchun: <b>🎁 +50 ball</b>!)\n"
+        "• 🎓 <b>100 ball</b> to'planganda bepul <b>Premium</b> faollashadi!\n\n"
         f"⭐ <b>{PREMIUM_STARS_PRICE} Telegram Stars</b> yoki karta orqali.\n\n"
         "Quyidagi tugmani bosing:"
     )
@@ -416,12 +560,183 @@ async def cmd_start(message: types.Message, state: FSMContext):
     user = message.from_user
     full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
     username = user.username or None
-    database.register_user(user.id, full_name=full_name, username=username)
+    
+    # Always register user first to ensure they exist in database
+    await asyncio.to_thread(database.register_user, user.id, full_name=full_name, username=username)
+    
+    args = message.text.split() if message.text else []
+    
+    # Check for daily bonus claim
+    if len(args) > 1 and args[1] == "claim_daily":
+        success, points, streak = await asyncio.to_thread(database.check_and_grant_daily_bonus, user.id)
+        if success:
+            streak_stars = "⭐" * min(streak, 7)
+            bonus_msg = (
+                f"✅ <b>Bugungi bonus olindi!</b>\n\n"
+                f"Sizga <b>+{points} ball</b> berildi!\n"
+                f"🔥 <b>Ketma-ket kirish:</b> {streak}-kun {streak_stars}\n\n"
+                f"⏰ Ertaga yana kiring."
+            )
+        else:
+            bonus_msg = "✅ Siz bugungi bonusni olib bo'lgansiz!\n⏰ Ertaga yana kiring."
+        await message.answer(bonus_msg, parse_mode="HTML", reply_markup=get_start_keyboard())
+        return
+        
+    # Check for spin bonus parameter from Wheel of Fortune Web App
+    if len(args) > 1 and args[1].startswith("spin_"):
+        try:
+            param = args[1].split("_")[1]
+            if param == "super":
+                success, msg = await asyncio.to_thread(database.check_and_grant_spin_bonus, user.id, 0)  # 0 represents super prize
+            else:
+                pts = int(param)
+                success, msg = await asyncio.to_thread(database.check_and_grant_spin_bonus, user.id, pts)
+                
+            reply_markup = get_start_keyboard()
+            if param == "super":
+                builder = InlineKeyboardBuilder()
+                builder.button(text="💎 Premium xarid qilish", callback_data="buy_premium")
+                builder.adjust(1)
+                reply_markup = builder.as_markup()
+
+            await message.answer(msg, parse_mode="HTML", reply_markup=reply_markup)
+            return
+        except Exception as e:
+            logging.error(f"Error handling spin parameter: {e}")
+            await message.answer("⚠️ Omad barabani bonusini tasdiqlashda xatolik yuz berdi.", reply_markup=get_start_keyboard())
+            return
+
+    # Check if referral argument exists
+    if len(args) > 1:
+        param = args[1]
+        referrer_id_str = param.replace("ref_", "")
+        if referrer_id_str.isdigit():
+            referrer_id = int(referrer_id_str)
+            # This handles referred_by connection
+            await asyncio.to_thread(database.handle_referral, user.id, referrer_id)
+            
+            # Notify the referrer
+            try:
+                referrer_score = await asyncio.to_thread(database.get_score, referrer_id)
+                ref_count = await asyncio.to_thread(database.get_referral_count, referrer_id)
+                
+                # Check if this registration triggered a 5th referral bonus
+                bonus_info = ""
+                if ref_count == 5:
+                    bonus_info = f"\n\n🎁 <b>Qo'shimcha bonus:</b> Siz 5 ta do'st taklif qilganingiz uchun yana <b>+50 ball</b> berildi!"
+
+                friend_name = full_name or "Do'stingiz"
+                ref_notification = (
+                    f"👥 <b>Do'stingiz taklifingizni qabul qildi!</b>\n\n"
+                    f"Foydalanuvchi <b>{friend_name}</b> botimizdan foydalanishni boshladi.\n"
+                    f"💰 Sizga <b>+10 ball</b> berildi!\n"
+                    f"📊 Taklif qilingan do'stlar: <b>{ref_count}</b> ta{bonus_info}\n"
+                    f"🏆 Umumiy ballaringiz: <b>{referrer_score}</b> ball"
+                )
+                await message.bot.send_message(chat_id=referrer_id, text=ref_notification, parse_mode="HTML")
+            except Exception as e:
+                logging.warning(f"Failed to notify referrer {referrer_id}: {e}")
+    
+    # Deep link orqali Web App dan kiritilgan bo'lsa
+    if message.text and "ai_consult_" in message.text:
+        body_part_key = message.text.split("ai_consult_")[-1].strip()
+        body_part_title = body_part_key
+        # Tarjima qismi
+        translations = {
+            "head": "Bosh",
+            "neck": "Bo'yin",
+            "shoulder": "Yelka",
+            "chest": "Ko'krak",
+            "arm": "Qo'l",
+            "abdomen": "Qorin",
+            "hand": "Kaft/Barmoq",
+            "hip": "Chanoq",
+            "thigh": "Son",
+            "knee": "Tizza",
+            "shin": "Boldir",
+            "foot": "Oyoq panjasi",
+            "back": "Bel/Orqa"
+        }
+        if body_part_key in translations:
+            body_part_title = translations[body_part_key]
+            
+        await message.answer(
+            f"🤖 <b>AI Konsultatsiya ({body_part_title}):</b>\n\n"
+            f"Siz <b>{body_part_title}</b> sohasidagi muammoni tanladingiz.\n"
+            f"Tahlil qilinmoqda, iltimos kuting... ⏳",
+            parse_mode="HTML",
+            reply_markup=get_start_keyboard()
+        )
+        
+        prompt = (
+            f"Foydalanuvchi inson tanasidagi '{body_part_title}' sohasida og'riq yoki bezovtalik borligini bildirdi. "
+            f"Ushbu tana a'zosi bo'yicha eng ko'p uchraydigan kasalliklar, ularning kelib chiqish sabablari va "
+            f"uy sharoitida birinchi yordam hamda shifokorga qachon murojaat qilish kerakligi haqida atroflicha, "
+            f"chiroyli va tushunarli o'zbek tilida maslahat ber."
+        )
+        
+        ai_response = await get_gemini_response(prompt)
+        await message.answer(ai_response, parse_mode="HTML")
+        return
+
+    web_app_url = await get_web_app_url(user.id)  # Bir marta yuklanadi
+    
+    start_text = (
+        "🚑 <b>Assalomu alaykum!</b>\n\n"
+        "Sog'lig'ingiz uchun foydali yordamchi botga xush kelibsiz! ❤️\n\n"
+        "<b>Bot orqali:</b>\n"
+        "📋 Holatlar ro'yxati\n"
+        "📚 Kasalliklar haqida ma'lumot\n"
+        "💬 AI Konsultatsiya\n"
+        "🏥 Eng yaqin kasalxonani topish\n"
+        "🚨 Favqulodda raqamlar\n"
+        "💊 Dori eslatmalari\n"
+        "👤 Tibbiy profil\n"
+        "🔔 Kunlik maslahatlar\n"
+        "🎁 Kunlik bonuslar\n"
+        "💎 Premium imkoniyatlar\n\n"
+        "va boshqa funksiyalardan foydalanishingiz mumkin.\n\n"
+        "📌 <b>Asosiy buyruqlar:</b>\n"
+        "/start — Botni ishga tushirish\n"
+        "/menu — Bosh menyu\n"
+        "/help — Yordam\n"
+        "/contacts — Tezkor telefon raqamlari\n"
+        "/premium — 💎 Premium imkoniyatlari\n\n"
+        "💎 <b>PREMIUM</b>\n\n"
+        "Botdagi qo'shimcha imkoniyatlardan foydalaning.\n\n"
+        "🎁 <b>Eng qiziq joyi:</b>\n"
+        "Tekin Premium olish imkoniyati mavjud!\n\n"
+        "👇 Quyidagi menyudan xizmatni tanlang:"
+    )
+
+    # Bitta xabar: start matni + ReplyKeyboardMarkup (menyu avtomatik ochiladi)
     await message.answer(
-        markdown_to_html(FIRST_AID_DATA["start"] + "\n\nKerakli bo'limni tanlang yoki sun'iy intellektga to'g'ridan-to'g'ri savol yozing:"),
+        start_text,
         reply_markup=get_start_keyboard(),
         parse_mode="HTML"
     )
+
+    # web_app_url yuqorida allaqachon yuklanган — qayta yuklamaymiz
+    if web_app_url:
+        try:
+            # Force update this specific user's bottom-left Menu Button instantly to bypass Telegram client cache
+            await message.bot.set_chat_menu_button(
+                chat_id=user.id,
+                menu_button=types.MenuButtonWebApp(
+                    text="🚑 Mini Ilova",
+                    web_app=types.WebAppInfo(url=web_app_url)
+                )
+            )
+        except Exception as e:
+            logging.error(f"Failed to update chat menu button for user {user.id}: {e}")
+    else:
+        try:
+            await message.bot.set_chat_menu_button(
+                chat_id=user.id,
+                menu_button=types.MenuButtonDefault()
+            )
+        except Exception as e:
+            pass
 
 @dp.message(Command("menu"))
 async def cmd_menu(message: types.Message, state: FSMContext):
@@ -457,6 +772,132 @@ async def cmd_contacts(message: types.Message):
         parse_mode="HTML"
     )
 
+@dp.message(F.text == "👥 Do'stlarni taklif qilish")
+async def show_referral_menu(message: types.Message):
+    user_id = message.from_user.id
+    bot_info = await message.bot.get_me()
+    bot_username = bot_info.username
+    
+    # Generate referral link
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    
+    # Get user referral count and score
+    ref_count = await asyncio.to_thread(database.get_referral_count, user_id)
+    
+    score = await asyncio.to_thread(database.get_score, user_id)
+    
+    # Share text
+    share_text = (
+        "Sog'liq va birinchi yordam botidan bepul foydalaning! "
+        "AI shifokor bilan cheksiz suhbat, kasalliklar tahlili va boshqa ko'plab foydali narsalar bor. "
+        "Botga kirish uchun quyidagi havolani bosing 👇"
+    )
+    
+    # Encode for url
+    import urllib.parse
+    share_url_encoded = urllib.parse.quote(ref_link)
+    share_text_encoded = urllib.parse.quote(share_text)
+    
+    share_link = f"https://t.me/share/url?url={share_url_encoded}&text={share_text_encoded}"
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🚀 Do'stlarga yuborish", url=share_link)
+    builder.adjust(1)
+    
+    # Message text
+    text = (
+        "👥 <b>Do'stlarni taklif qilish</b>\n\n"
+        "Botimizni do'stlaringizga tavsiya qiling va bepul Premium obunani qo'lga kiriting!\n\n"
+        "💰 <b>Qoidalar:</b>\n"
+        "• Har bir taklif qilingan do'stingiz uchun: <b>+10 ball</b>\n"
+        "• Har 5 ta taklif qilingan do'st uchun qo'shimcha bonus: <b>🎁 +50 ball</b>\n\n"
+        "📊 <b>Sizning ko'rsatkichlaringiz:</b>\n"
+        f"• Taklif qilingan do'stlar: <b>{ref_count}</b> ta\n"
+        f"• Sizning joriy ballaringiz: <b>{score}</b> ball\n\n"
+        f"🔗 <b>Sizning shaxsiy taklif havolangiz:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        "💡 Havolani nusxalab do'stlaringizga yuboring yoki quyidagi <b>Do'stlarga yuborish</b> tugmasini bosing!"
+    )
+    
+    await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+async def send_free_premium_info(user_id: int, user: types.User, chat_id: int, bot: Bot):
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
+    await asyncio.to_thread(database.register_user, user_id, full_name=full_name, username=user.username)
+    
+    score = await asyncio.to_thread(database.get_score, user_id)
+    web_app_url = await get_web_app_url(user_id, page="wheel")
+    
+    builder = InlineKeyboardBuilder()
+    if web_app_url:
+        builder.button(
+            text="🎡 Omad barabani",
+            web_app=types.WebAppInfo(url=web_app_url)
+        )
+    builder.button(text="👥 Do'stlarni taklif qilish", callback_data="show_ref_from_cmd")
+    builder.adjust(1)
+
+    text = (
+        "💎 <b>Bepul Premium olish tizimi</b>\n\n"
+        "Siz botdagi faolligingiz orqali bepul Premium obunani qo'lga kiritishingiz mumkin! Buning uchun <b>100 ball</b> to'plashingiz kifoya.\n\n"
+        "💰 <b>Ball to'plash yo'llari:</b>\n"
+        "1. 🔥 <b>Kunlik bonus:</b> Har kuni botga kirib, ballarni to'plang (1, 2, 3... ball va 7-kuni 🎁 +20 ball!).\n"
+        "2. 👥 <b>Do'stlarni taklif qilish:</b> Har bir taklif qilgan do'stingiz uchun <b>+10 ball</b>, har 5 ta do'st uchun esa qo'shimcha <b>🎁 +50 ball</b> beriladi!\n"
+        "3. 🎡 <b>Omad barabani:</b> Har kuni 1 marta barabanni bepul aylantirib ball yutib oling!\n\n"
+        f"🏆 <b>Sizning joriy ballaringiz:</b> <b>{score}</b> ball\n\n"
+        "Omad barabanini aylantirish yoki do'stlarni taklif qilish uchun quyidagi tugmalardan foydalaning 👇"
+    )
+    await bot.send_message(chat_id, text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+
+# /free_premium komandasi o'chirildi — uning o'rniga /premium ichiga birlashtirildi
+
+@dp.callback_query(F.data == "free_premium_info")
+async def cb_free_premium_info(callback: types.CallbackQuery):
+    # Eski tugma bosgan bo'lsa ham Premium sahifasiga yo'naltiramiz
+    await _show_premium_page(callback)
+
+@dp.callback_query(F.data == "show_ref_from_cmd")
+async def process_show_ref_from_cmd(callback: types.CallbackQuery):
+    await callback.answer()
+    user = callback.from_user
+    bot_info = await callback.message.bot.get_me()
+    bot_username = bot_info.username
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user.id}"
+    
+    ref_count = await asyncio.to_thread(database.get_referral_count, user.id)
+    
+    score = await asyncio.to_thread(database.get_score, user.id)
+    
+    import urllib.parse
+    share_text = (
+        "Sog'liq va birinchi yordam botidan bepul foydalaning! "
+        "AI shifokor bilan cheksiz suhbat, kasalliklar tahlili va boshqa ko'plab foydali narsalar bor. "
+        "Botga kirish uchun quyidagi havolani bosing 👇"
+    )
+    share_url_encoded = urllib.parse.quote(ref_link)
+    share_text_encoded = urllib.parse.quote(share_text)
+    share_link = f"https://t.me/share/url?url={share_url_encoded}&text={share_text_encoded}"
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🚀 Do'stlarga yuborish", url=share_link)
+    builder.adjust(1)
+    
+    text = (
+        "👥 <b>Do'stlarni taklif qilish</b>\n\n"
+        "Botimizni do'stlaringizga tavsiya qiling va bepul Premium obunani qo'lga kiriting!\n\n"
+        "💰 <b>Qoidalar:</b>\n"
+        "• Har bir taklif qilingan do'stingiz uchun: <b>+10 ball</b>\n"
+        "• Har 5 ta taklif qilingan do'st uchun qo'shimcha bonus: <b>🎁 +50 ball</b>\n\n"
+        "📊 <b>Sizning ko'rsatkichlaringiz:</b>\n"
+        f"• Taklif qilingan do'stlar: <b>{ref_count}</b> ta\n"
+        f"• Sizning joriy ballaringiz: <b>{score}</b> ball\n\n"
+        f"🔗 <b>Sizning shaxsiy taklif havolangiz:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        "💡 Havolani nusxalab do'stlaringizga yuboring yoki quyidagi <b>Do'stlarga yuborish</b> tugmasini bosing!"
+    )
+    await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
 # ═══════════════════════════════════════════════════════════════════
 # REPLY KEYBOARD HANDLERLARI
 # ═══════════════════════════════════════════════════════════════════
@@ -465,11 +906,11 @@ async def cmd_contacts(message: types.Message):
 async def reply_conditions(message: types.Message):
     await message.answer("Quyidagi holatlardan birini tanlang:", reply_markup=get_conditions_keyboard())
 
-@dp.message(F.text == "📚 Kasalliklar Ro'yxati (100+)")
+@dp.message(F.text == "📚 Kasalliklar")
 async def reply_diseases_list(message: types.Message):
     await message.answer("Kasallikni tanlang (sahifa 1/10):", reply_markup=get_diseases_keyboard(1))
 
-@dp.message(F.text == "💬 AI Konsultatsiya (Chat)")
+@dp.message(F.text == "💬 AI Konsultatsiya")
 async def reply_diseases_ai(message: types.Message, state: FSMContext):
     await state.set_state(AiChatStates.chatting)
     text = (
@@ -479,11 +920,17 @@ async def reply_diseases_ai(message: types.Message, state: FSMContext):
         "• *Bosh og'rig'ini qoldirish uchun nima qilish kerak?*\n"
         "• *Sog'lom ovqatlanish qoidalari qanday?*\n"
         "• *Bel og'rig'iga qanday mashqlar foydali?*\n\n"
-        "⚠️ <i>Chatdan chiqish uchun boshqa biror menyu tugmasini bosing yoki /cancel deb yozing.</i>"
+        "⚠️ Chatdan chiqish uchun boshqa biror menyu tugmasini bosing yoki /cancel deb yozing."
     )
     await message.answer(markdown_to_html(text), reply_markup=get_start_keyboard(), parse_mode="HTML")
 
-@dp.message(F.text == "🏥 Eng yaqin kasalxona")
+@dp.message(F.text == "❌ Bekor qilish")
+@dp.message(Command("cancel"))
+async def cancel_handler(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Amal bekor qilindi. Bosh menyudasiz.", reply_markup=get_start_keyboard())
+
+@dp.message(F.text == "🏥 Yaqin kasalxona")
 async def reply_hospital(message: types.Message):
     await message.answer(
         markdown_to_html(
@@ -494,7 +941,7 @@ async def reply_hospital(message: types.Message):
         parse_mode="HTML"
     )
 
-@dp.message(F.text == "💎 Premium olish")
+@dp.message(F.text == "💎 Premium")
 async def reply_premium_info(message: types.Message):
     await _show_premium_page(message)
 
@@ -599,7 +1046,7 @@ async def process_disease_callback(callback: types.CallbackQuery):
     await callback.message.bot.send_chat_action(chat_id=callback.message.chat.id, action="typing")
 
     # Premium foydalanuvchilar uchun batafsil tugmasi ko'rinadi
-    is_premium_user, _ = database.get_premium_info(user_id)
+    is_premium_user, _ = await asyncio.to_thread(database.get_premium_info, user_id)
     builder = InlineKeyboardBuilder()
     if is_premium_user:
         builder.button(text="🔍 Batafsil ma'lumot (AI)", callback_data=f"det_{page}_{index}")
@@ -609,7 +1056,7 @@ async def process_disease_callback(callback: types.CallbackQuery):
     builder.adjust(1, 1)
 
     # Tibbiy profilni AI ga qo'shish
-    profile = database.get_medical_profile(user_id)
+    profile = await asyncio.to_thread(database.get_medical_profile, user_id)
     profile_context = _build_profile_context(profile)
 
     prompt = (
@@ -628,14 +1075,14 @@ async def process_disease_callback(callback: types.CallbackQuery):
         placeholder_text=f"⏳ <b>{disease_name}</b> haqida ma'lumot yuklanmoqda...",
         reply_markup=builder.as_markup()
     )
-    database.increment_usage(user_id)
+    await asyncio.to_thread(database.increment_usage, user_id)
 
 @dp.callback_query(F.data.startswith("det_"))
 async def process_disease_detail_callback(callback: types.CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
     # "Batafsil ma'lumot" — FAQAT PREMIUM foydalanuvchilar uchun
-    is_premium_user, premium_expires_at = database.get_premium_info(user_id)
+    is_premium_user, premium_expires_at = await asyncio.to_thread(database.get_premium_info, user_id)
     import datetime as _dt
     if is_premium_user and premium_expires_at:
         expires = _dt.datetime.fromisoformat(premium_expires_at)
@@ -649,11 +1096,15 @@ async def process_disease_detail_callback(callback: types.CallbackQuery):
             "• Barcha simptomlar\n"
             "• Davolash va dorilar\n"
             "• Parhez va profilaktika\n\n"
+            "🎁 <b>Bepul Premium olish yo'li:</b>\n"
+            "• 🔥 Har kuni botga kirib, kunlik bonus to'plang (1, 2, 3... ball)!\n"
+            "• 👥 Do'stingizni taklif qiling: <b>+10 ball</b> (5 ta do'st uchun: <b>🎁 +50 ball</b>!)\n"
+            "• 🎓 <b>100 ball</b> to'planganda bepul <b>Premium</b> faollashadi!\n\n"
             f"⭐ <b>{PREMIUM_STARS_PRICE} Telegram Stars</b> — oylik Premium.\n\n"
             "Quyidagi tugmani bosing:"
         )
         builder = InlineKeyboardBuilder()
-        builder.button(text="💎 Premium olish", callback_data="buy_premium")
+        builder.button(text="💎 Premium", callback_data="buy_premium")
         builder.button(text="⬅️ Ro'yxatga qaytish", callback_data=f"page_{callback.data.split('_')[1]}")
         builder.adjust(1)
         try:
@@ -670,7 +1121,7 @@ async def process_disease_detail_callback(callback: types.CallbackQuery):
     builder.button(text="📋 Kasalliklar ro'yxatiga qaytish", callback_data=f"page_{page}")
     builder.adjust(1, 1)
 
-    profile = database.get_medical_profile(user_id)
+    profile = await asyncio.to_thread(database.get_medical_profile, user_id)
     profile_context = _build_profile_context(profile)
 
     prompt = (
@@ -693,7 +1144,7 @@ async def process_disease_detail_callback(callback: types.CallbackQuery):
         placeholder_text=f"⏳ <b>{disease_name}</b> haqida to'liq ma'lumot tayyorlanmoqda...",
         reply_markup=builder.as_markup()
     )
-    database.increment_usage(user_id)
+    await asyncio.to_thread(database.increment_usage, user_id)
 
 
 
@@ -704,7 +1155,7 @@ async def process_disease_detail_callback(callback: types.CallbackQuery):
 @dp.message(F.text == "👤 Tibbiy Profilim")
 async def medical_profile_menu(message: types.Message):
     user_id = message.from_user.id
-    profile = database.get_medical_profile(user_id)
+    profile = await asyncio.to_thread(database.get_medical_profile, user_id)
     blood_group, age, weight, height, chronic, allergies = profile if profile else (None,)*6
 
     text = (
@@ -830,7 +1281,7 @@ async def profile_allergies(message: types.Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
 
-    database.save_medical_profile(
+    await asyncio.to_thread(database.save_medical_profile, 
         user_id=message.from_user.id,
         blood_group=data.get("blood_group"),
         age=data.get("age"),
@@ -848,7 +1299,7 @@ async def profile_allergies(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "clear_profile")
 async def clear_profile(callback: types.CallbackQuery):
-    database.save_medical_profile(callback.from_user.id)  # Hammasini None qiladi
+    await asyncio.to_thread(database.save_medical_profile, callback.from_user.id)  # Hammasini None qiladi
     await callback.message.edit_text(
         "🗑️ Tibbiy profilingiz tozalandi.",
         parse_mode="HTML"
@@ -862,30 +1313,79 @@ async def clear_profile(callback: types.CallbackQuery):
 @dp.message(F.text == "💊 Dori Eslatmalari")
 async def reminder_menu(message: types.Message):
     user_id = message.from_user.id
-    reminders = database.get_user_reminders(user_id)
+    reminders = await asyncio.to_thread(database.get_user_reminders, user_id)
 
     builder = InlineKeyboardBuilder()
     builder.button(text="➕ Yangi eslatma qo'shish", callback_data="add_reminder")
 
+    # Limit hisoblash
+    is_prem, _ = await asyncio.to_thread(database.get_premium_info, user_id)
+    current_count = await asyncio.to_thread(database.count_user_active_reminders, user_id)
+    limit = 7 if is_prem else 3
+
     text = "💊 <b>Dori Eslatmalari</b>\n\n"
+    if is_prem:
+        slot_line = f"🌟 <b>Premium:</b> {current_count}/{limit} eslatma faol\n\n"
+    else:
+        slot_line = f"📊 <b>Eslatmalar:</b> {current_count}/{limit} (Oddiy)\n\n"
+
     if reminders:
+        text += slot_line
         text += "📋 <b>Faol eslatmalaringiz:</b>\n\n"
-        for rem_id, name, times in reminders:
+        for rem_id, name, times, days in reminders:
             times_display = times.replace(",", ", ")
-            text += f"• <b>{name}</b> — {times_display}\n"
+            days_icon = "🗓 Har kuni" if days == "daily" else "📆 Kunora"
+            text += f"• <b>{name}</b> — {times_display} ({days_icon})\n"
             builder.button(text=f"🗑️ {name} o'chirish", callback_data=f"del_rem_{rem_id}")
     else:
-        text += "Hozircha hech qanday eslatma yo'q.\n\nQuyidagi tugmadan yangi eslatma qo'shishingiz mumkin:"
+        text += slot_line
+        text += "Hozircha hech qanday eslatma yo'q.\nQuyidagi tugmadan yangi eslatma qo'shishingiz mumkin:"
+
+    # Explain points and premium
+    score = await asyncio.to_thread(database.get_score, user_id)
+    text += (
+        f"\n\n🏆 <b>Sizning ballaringiz:</b> {score} ball\n"
+        f"💡 <b>Eslatma:</b> Har kuni botga kirib, kunlik bonus ballarni to'plang va bepul Premium obunani qo'lga kiriting!"
+    )
 
     builder.adjust(1)
     await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "add_reminder")
 async def add_reminder_start(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    is_prem, _ = await asyncio.to_thread(database.get_premium_info, user_id)
+    current_count = await asyncio.to_thread(database.count_user_active_reminders, user_id)
+    limit = 7 if is_prem else 3
+
+    if current_count >= limit:
+        if is_prem:
+            msg = (
+                f"🌟 <b>Premium limitga yetdingiz!</b>\n\n"
+                f"Sizda hozir <b>{current_count}/{limit}</b> ta faol eslatma bor.\n"
+                f"Premium foydalanuvchilar uchun maksimal limit — <b>7 ta</b>.\n\n"
+                f"Yangi eslatma qo'shish uchun eskisini o'chiring."
+            )
+        else:
+            msg = (
+                f"⚠️ <b>Kunlik limitga yetdingiz!</b>\n\n"
+                f"Sizda hozir <b>{current_count}/{limit}</b> ta faol eslatma bor.\n"
+                f"Oddiy foydalanuvchilar uchun maksimal limit — <b>3 ta</b>.\n\n"
+                f"💎 <b>Premium</b> olsangiz — <b>7 tagacha</b> eslatma qo'sha olasiz!"
+            )
+            builder_lim = InlineKeyboardBuilder()
+            builder_lim.button(text="💎 Premium", callback_data="show_premium")
+            await callback.message.edit_text(msg, reply_markup=builder_lim.as_markup(), parse_mode="HTML")
+            await callback.answer()
+            return
+        await callback.message.edit_text(msg, parse_mode="HTML")
+        await callback.answer()
+        return
+
     await state.set_state(ReminderStates.medicine_name)
     await callback.message.edit_text(
         "💊 <b>Yangi dori eslatmasi</b>\n\n"
-        "<b>1/2</b> — Dori nomini kiriting:\n"
+        "<b>1/3</b> — Dori nomini kiriting:\n"
         "Masalan: <i>Paracetamol</i>",
         parse_mode="HTML"
     )
@@ -896,7 +1396,7 @@ async def reminder_medicine_name(message: types.Message, state: FSMContext):
     await state.update_data(medicine_name=message.text.strip())
     await state.set_state(ReminderStates.times)
     await message.answer(
-        "⏰ <b>2/2 — Ichish vaqtlarini kiriting</b>\n\n"
+        "⏰ <b>2/3 — Ichish vaqtlarini kiriting</b>\n\n"
         "Vaqtlarni vergul bilan ajrating:\n"
         "Masalan: <code>08:00,14:00,20:00</code>\n\n"
         "Yoki bitta vaqt: <code>09:00</code>",
@@ -924,42 +1424,87 @@ async def reminder_times(message: types.Message, state: FSMContext):
             )
             return
 
+    await state.update_data(times_str=",".join(valid_times))
+    await state.set_state(ReminderStates.days)
+
+    # Kun tanlash klaviaturasi
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗓 Har kuni", callback_data="rem_days_daily")
+    builder.button(text="📆 Kunora", callback_data="rem_days_every_other")
+    builder.adjust(2)
+    await message.answer(
+        "📅 <b>3/3 — Qaysi kunlari eslatish kerak?</b>\n\n"
+        "🗓 <b>Har kuni</b> — Har kuni belgilangan vaqtda eslatadi\n"
+        "📆 <b>Kunora</b> — Bir kun eslatadi, bir kun dam oladi",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data.startswith("rem_days_"), ReminderStates.days)
+async def reminder_days_chosen(callback: types.CallbackQuery, state: FSMContext):
+    """Foydalanuvchi kun turini tanladi — eslatmani bazaga saqlaymiz"""
+    days = "daily" if callback.data == "rem_days_daily" else "every_other"
+    days_text = "🗓 Har kuni" if days == "daily" else "📆 Kunora"
+
     data = await state.get_data()
     await state.clear()
 
     medicine_name = data["medicine_name"]
-    times_str = ",".join(valid_times)
-    database.add_reminder(message.from_user.id, medicine_name, times_str)
+    times_str = data["times_str"]
+    await asyncio.to_thread(database.add_reminder, callback.from_user.id, medicine_name, times_str, days)
 
-    await message.answer(
+    await callback.message.edit_text(
         f"✅ <b>Eslatma qo'shildi!</b>\n\n"
         f"💊 <b>Dori:</b> {medicine_name}\n"
-        f"⏰ <b>Vaqtlar:</b> {times_str.replace(',', ', ')}\n\n"
+        f"⏰ <b>Vaqtlar:</b> {times_str.replace(',', ', ')}\n"
+        f"📅 <b>Kunlar:</b> {days_text}\n\n"
         f"Bot belgilangan vaqtlarda sizga eslatma yuboradi! 🔔",
-        parse_mode="HTML",
-        reply_markup=get_start_keyboard()
+        parse_mode="HTML"
     )
+    await callback.answer("✅ Eslatma saqlandi!")
+
 
 @dp.callback_query(F.data.startswith("del_rem_"))
 async def delete_reminder_handler(callback: types.CallbackQuery):
     rem_id = int(callback.data.replace("del_rem_", ""))
-    database.delete_reminder(rem_id, callback.from_user.id)
+    await asyncio.to_thread(database.delete_reminder, rem_id, callback.from_user.id)
     await callback.answer("✅ Eslatma o'chirildi!", show_alert=True)
     # Ro'yxatni yangilash
     await reminder_menu_refresh(callback.message, callback.from_user.id)
 
 async def reminder_menu_refresh(message: types.Message, user_id: int):
-    reminders = database.get_user_reminders(user_id)
+    reminders = await asyncio.to_thread(database.get_user_reminders, user_id)
+    is_prem, _ = await asyncio.to_thread(database.get_premium_info, user_id)
+    current_count = len(reminders)
+    limit = 7 if is_prem else 3
+
     builder = InlineKeyboardBuilder()
     builder.button(text="➕ Yangi eslatma qo'shish", callback_data="add_reminder")
+
+    if is_prem:
+        slot_line = f"🌟 <b>Premium:</b> {current_count}/{limit} eslatma faol\n\n"
+    else:
+        slot_line = f"📊 <b>Eslatmalar:</b> {current_count}/{limit} (Oddiy)\n\n"
+
     text = "💊 <b>Dori Eslatmalari</b>\n\n"
     if reminders:
+        text += slot_line
         text += "📋 <b>Faol eslatmalaringiz:</b>\n\n"
-        for rem_id, name, times in reminders:
-            text += f"• <b>{name}</b> — {times.replace(',', ', ')}\n"
+        for rem_id, name, times, days in reminders:
+            days_icon = "🗓 Har kuni" if days == "daily" else "📆 Kunora"
+            text += f"• <b>{name}</b> — {times.replace(',', ', ')} ({days_icon})\n"
             builder.button(text=f"🗑️ {name} o'chirish", callback_data=f"del_rem_{rem_id}")
     else:
+        text += slot_line
         text += "Barcha eslatmalar o'chirildi."
+
+    # Explain points and premium
+    score = await asyncio.to_thread(database.get_score, user_id)
+    text += (
+        f"\n\n🏆 <b>Sizning ballaringiz:</b> {score} ball\n"
+        f"💡 <b>Eslatma:</b> Har kuni botga kirib, kunlik bonus ballarni to'plang va bepul Premium obunani qo'lga kiriting!"
+    )
+
     builder.adjust(1)
     try:
         await message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -975,15 +1520,11 @@ async def handle_voice(message: types.Message):
     """Ovozli xabarlarni Gemini AI orqali matnlashtirish va javob berish"""
     user_id = message.from_user.id
     
-    # Admin xabar tarqatish uchun media yuklayotgan bo'lishi mumkin, AI tahlil qilmaydi
-    if str(user_id) == str(ADMIN_ID):
-        return
-
-    # Agar ovozli xabarda buyruq bo'lsa (masalan captionda)
+    # Agar ovozli xabarda buyruq bo'lsa (masalan captionda) — o'tkazib yuboramiz
     if message.caption and message.caption.strip().startswith('/'):
         return
 
-    if not database.check_ai_limit(user_id):
+    if not await asyncio.to_thread(database.check_ai_limit, user_id):
         await premium_upsell(message)
         return
 
@@ -1029,8 +1570,9 @@ async def handle_voice(message: types.Message):
             }
         ]
 
-        # Gemini API ga yuborish
-        for model in GEMINI_MODELS:
+        # Gemini API ga yuborish (multimodal modellar bilan)
+        last_err = None
+        for model in GEMINI_MULTIMODAL_MODELS:
             try:
                 response = await gemini_client.aio.models.generate_content(
                     model=model,
@@ -1046,20 +1588,24 @@ async def handle_voice(message: types.Message):
                         + markdown_to_html(response.text),
                         parse_mode="HTML"
                     )
-                    database.increment_usage(user_id)
+                    await asyncio.to_thread(database.increment_usage, user_id)
                     return
             except Exception as e:
                 err = str(e)
-                if "429" in err or "404" in err or "NOT_FOUND" in err:
+                logging.warning(f"Voice: {model} xato: {err[:200]}")
+                last_err = err
+                if "429" in err or "404" in err or "NOT_FOUND" in err or "RESOURCE_EXHAUSTED" in err:
                     continue
                 break
 
         # Fallback: API ovozni qayta ishlay olmasa
+        logging.error(f"Voice: barcha modellar ishlamadi. Oxirgi xato: {last_err}")
         await status_msg.edit_text(
             "⚠️ Ovozli xabarni matnlashtirish vaqtincha ishlamayapti.\n\n"
             "Iltimos, savolingizni <b>matn ko'rinishida</b> yuboring. 📝",
             parse_mode="HTML"
         )
+
 
     except Exception as e:
         logging.error(f"Voice handler xatosi: {e}")
@@ -1089,7 +1635,7 @@ async def health_calculator_menu(message: types.Message):
 @dp.callback_query(F.data == "calc_bmi")
 async def calc_bmi_start(callback: types.CallbackQuery, state: FSMContext):
     # Profilda ma'lumot bo'lsa, undan foydalanamiz
-    profile = database.get_medical_profile(callback.from_user.id)
+    profile = await asyncio.to_thread(database.get_medical_profile, callback.from_user.id)
     if profile and profile[2] and profile[3]:
         weight, height = profile[2], profile[3]
         result = _calculate_bmi(weight, height)
@@ -1165,7 +1711,7 @@ def _calculate_bmi(weight: float, height: float) -> str:
 
 @dp.callback_query(F.data == "calc_water")
 async def calc_water_start(callback: types.CallbackQuery, state: FSMContext):
-    profile = database.get_medical_profile(callback.from_user.id)
+    profile = await asyncio.to_thread(database.get_medical_profile, callback.from_user.id)
     if profile and profile[2]:
         weight = profile[2]
         result = _calculate_water(weight)
@@ -1216,11 +1762,11 @@ def _calculate_water(weight: float) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 async def _show_premium_page(message_or_cb):
-    """Premium sahifasini ko'rsatish — Stars to'lov va manual chek"""
+    """Premium sahifasini ko'rsatish — to'liq: Stars to'lov + tekin Premium"""
     is_callback = isinstance(message_or_cb, types.CallbackQuery)
     user_id = message_or_cb.from_user.id
 
-    is_prem, expires = database.get_premium_info(user_id)
+    is_prem, expires = await asyncio.to_thread(database.get_premium_info, user_id)
     if is_prem and expires:
         exp_dt = datetime.fromisoformat(expires)
         exp_str = exp_dt.strftime("%d.%m.%Y")
@@ -1230,26 +1776,59 @@ async def _show_premium_page(message_or_cb):
             f"✅ Cheksiz AI so'rovlaridan bahramand bo'ling!"
         )
         if is_callback:
-            await message_or_cb.message.edit_text(text, parse_mode="HTML")
+            try:
+                await message_or_cb.message.edit_text(text, parse_mode="HTML")
+            except Exception:
+                await message_or_cb.message.answer(text, parse_mode="HTML")
             await message_or_cb.answer()
         else:
             await message_or_cb.answer(text, parse_mode="HTML")
         return
 
-    builder = InlineKeyboardBuilder()
-    builder.button(text=f"⭐ {PREMIUM_STARS_PRICE} Stars bilan to'lash", callback_data="pay_stars")
-    builder.adjust(1)
+    # Ball va chegirma ma'lumotlari
+    score = await asyncio.to_thread(database.get_score, user_id)
+    has_disc = await asyncio.to_thread(database.has_discount, user_id)
+    price = 20 if has_disc else PREMIUM_STARS_PRICE
+    balls_needed = max(0, 100 - score)
+
+    price_text = (
+        f"⭐ <b>Narx: <s>{PREMIUM_STARS_PRICE}</s> 20 Telegram Stars</b> (1 oylik) — <i>Omad barabani chegirmasi faol! 🎁</i>\n"
+        if has_disc else
+        f"⭐ <b>Narx: {PREMIUM_STARS_PRICE} Telegram Stars</b> (1 oylik)\n"
+    )
 
     text = (
         "💎 <b>Premium Obuna</b>\n\n"
         "🚀 <b>Premium afzalliklari:</b>\n"
         "• ♾️ Cheksiz AI so'rovlari\n"
-        "• 🎙️ Ovozli xabar orqali konsultatsiya\n"
+        "• 🎤 Ovozli xabar orqali konsultatsiya\n"
         "• 🏥 Kasalliklar bo'yicha batafsil tahlil\n"
         "• 🩺 Tibbiy profilga asoslangan shaxsiy maslahat\n\n"
-        f"⭐ <b>Narx: {PREMIUM_STARS_PRICE} Telegram Stars</b> (1 oylik)\n\n"
-        "👇 Qulay usulni tanlang:"
+        "──────────────────────\n"
+        + price_text +
+        "──────────────────────\n\n"
+        "🎁 <b>Tekin Premium olish yo'llari:</b>\n\n"
+        "1️⃣ 🔥 <b>Kunlik bonus:</b> Har kuni botga kirib ball to'plang\n"
+        "   (1-kun 1 ball, 2-kun 2 ball ... 7-kun 🎁 +20 ball!)\n\n"
+        "2️⃣ 👥 <b>Do'st taklif qilish:</b> Har bir do'stingiz uchun <b>+10 ball</b>\n"
+        "   5 ta do'st = qo'shimcha <b>🎁 +50 ball</b> bonus!\n\n"
+        "3️⃣ 🎡 <b>Omad barabani:</b> Har kuni 1 marta bepul aylantirib\n"
+        "   ball yoki chegirma yutib oling!\n\n"
+        f"🏆 <b>Sizning ballaringiz:</b> <b>{score}</b> ball\n"
+        + (f"⚡ Yana <b>{balls_needed}</b> ball to'plasangiz, Premium avtomatik faollashadi!\n\n"
+           if balls_needed > 0 else
+           "✅ <b>Tabriklaymiz!</b> Ballaringiz yetarli, Premium faollashtirish uchun adminga murojaat qiling!\n\n")
+        + "👇 Qulay usulni tanlang:"
     )
+
+    # Tugmalar: Stars to'lov + Omad barabani + Do'stlarni taklif qilish
+    web_app_url = await get_web_app_url(user_id, page="wheel")
+    builder = InlineKeyboardBuilder()
+    builder.button(text=f"⭐ {price} Stars bilan to'lash", callback_data="pay_stars")
+    if web_app_url:
+        builder.button(text="🎡 Omad barabani", web_app=types.WebAppInfo(url=web_app_url))
+    builder.button(text="👥 Do'stlarni taklif qilish", callback_data="show_ref_from_cmd")
+    builder.adjust(1)
 
     if is_callback:
         try:
@@ -1260,7 +1839,7 @@ async def _show_premium_page(message_or_cb):
     else:
         await message_or_cb.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
-@dp.callback_query(F.data == "buy_premium")
+@dp.callback_query(F.data.in_(["buy_premium", "show_premium"]))
 async def process_buy_premium(callback: types.CallbackQuery):
     await _show_premium_page(callback)
 
@@ -1268,7 +1847,9 @@ async def process_buy_premium(callback: types.CallbackQuery):
 async def process_pay_stars(callback: types.CallbackQuery):
     """Telegram Stars invoice yuborish — provider_token shart emas!"""
     try:
-        prices = [LabeledPrice(label="Premium obuna (1 oy)", amount=PREMIUM_STARS_PRICE)]
+        user_id = callback.from_user.id
+        price = 20 if await asyncio.to_thread(database.has_discount, user_id) else PREMIUM_STARS_PRICE
+        prices = [LabeledPrice(label="Premium obuna (1 oy)", amount=price)]
         await callback.message.answer_invoice(
             title="💎 Premium Obuna — 1 oy",
             description=(
@@ -1303,8 +1884,12 @@ async def process_successful_payment(message: types.Message):
 
     # Stars to'lovi
     if payment.invoice_payload == "stars_premium_1month":
-        database.set_premium(user_id, 1, months=1)
+        await asyncio.to_thread(database.set_premium, user_id, 1, months=1)
         stars_count = payment.total_amount
+        
+        # Consume super prize discount if used
+        if await asyncio.to_thread(database.has_discount, user_id):
+            await asyncio.to_thread(database.consume_discount, user_id)
 
         await message.answer(
             f"🎉 <b>To'lov muvaffaqiyatli!</b>\n\n"
@@ -1335,7 +1920,7 @@ async def process_successful_payment(message: types.Message):
 
     # Eski UZS to'lovi (agar PROVIDER_TOKEN bo'lsa)
     elif payment.invoice_payload == "premium_1month":
-        database.set_premium(user_id, 1, months=1)
+        await asyncio.to_thread(database.set_premium, user_id, 1, months=1)
         amount = payment.total_amount / 100
         await message.answer(
             "🎉 <b>To'lov muvaffaqiyatli amalga oshirildi!</b>\n\n"
@@ -1366,7 +1951,7 @@ async def process_successful_payment(message: types.Message):
 @dp.callback_query(F.data == "send_receipt")
 async def process_send_receipt(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PaymentStates.waiting_for_receipt)
-    database.set_waiting_receipt(callback.from_user.id, 1)
+    await asyncio.to_thread(database.set_waiting_receipt, callback.from_user.id, 1)
     await callback.message.edit_text(
         f"💳 <b>Karta orqali to'lov:</b>\n"
         f"<code>{CARD_NUMBER}</code>\n"
@@ -1381,7 +1966,7 @@ async def process_send_receipt(callback: types.CallbackQuery, state: FSMContext)
 async def handle_receipt_photo(message: types.Message, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
-    database.set_waiting_receipt(user_id, 0)
+    await asyncio.to_thread(database.set_waiting_receipt, user_id, 0)
     username = f"@{message.from_user.username}" if message.from_user.username else "Noma'lum"
     photo_id = message.photo[-1].file_id
     admin_keyboard = InlineKeyboardBuilder()
@@ -1414,15 +1999,13 @@ async def handle_receipt_photo(message: types.Message, state: FSMContext):
 async def handle_general_photo(message: types.Message):
     user_id = message.from_user.id
     
-    # Admin rasm tarqatish uchun yuklayotgan bo'lishi mumkin, AI tahlil qilmaydi
-    if str(user_id) == str(ADMIN_ID):
-        return
+    # Agar rasm ostida buyruq yozilgan bo'lsa (masalan, /broadcast) — o'tkazib yuboramiz
 
     # Agar rasm ostida buyruq yozilgan bo'lsa (masalan, /broadcast)
     if message.caption and message.caption.strip().startswith('/'):
         return
 
-    if not database.check_ai_limit(user_id):
+    if not await asyncio.to_thread(database.check_ai_limit, user_id):
         await premium_upsell(message)
         return
 
@@ -1456,7 +2039,7 @@ async def handle_general_photo(message: types.Message):
         user_caption = message.caption or "Ushbu rasmdagi tibbiy holat bo'yicha tushuntirish va birinchi yordam choralarini bering."
 
         # Tibbiy profil ma'lumotlari
-        profile = database.get_medical_profile(user_id)
+        profile = await asyncio.to_thread(database.get_medical_profile, user_id)
         profile_context = _build_profile_context(profile)
 
         prompt_parts = [
@@ -1479,8 +2062,9 @@ async def handle_general_photo(message: types.Message):
             }
         ]
 
-        # Gemini modellari orqali sinab ko'ramiz
-        for model in GEMINI_MODELS:
+        # Gemini modellari orqali sinab ko'ramiz (multimodal)
+        last_err = None
+        for model in GEMINI_MULTIMODAL_MODELS:
             try:
                 response = await gemini_client.aio.models.generate_content(
                     model=model,
@@ -1496,10 +2080,12 @@ async def handle_general_photo(message: types.Message):
                         + markdown_to_html(response.text),
                         parse_mode="HTML"
                     )
-                    database.increment_usage(user_id)
+                    await asyncio.to_thread(database.increment_usage, user_id)
                     return
             except Exception as e:
                 err = str(e)
+                logging.warning(f"Rasm: {model} xato: {err[:150]}")
+                last_err = err
                 if "429" in err or "404" in err or "RESOURCE_EXHAUSTED" in err or "NOT_FOUND" in err:
                     logging.warning(f"Rasm tahlilida {model} ishlamadi, keyingisiga o'tish...")
                     continue
@@ -1525,7 +2111,7 @@ async def process_admin_approve(callback: types.CallbackQuery):
         await callback.answer("Siz admin emassiz!", show_alert=True)
         return
     user_id = int(callback.data.replace("adm_app_", ""))
-    database.set_premium(user_id, 1)
+    await asyncio.to_thread(database.set_premium, user_id, 1)
     await callback.message.edit_caption(
         caption=callback.message.caption + "\n\n✅ <b>Tasdiqlandi! Premium berildi.</b>",
         reply_markup=None,
@@ -1576,7 +2162,7 @@ async def process_admin_reject(callback: types.CallbackQuery):
 @dp.message(F.text == "🔔 Kunlik Maslahatlar")
 async def daily_tips_menu(message: types.Message):
     user_id = message.from_user.id
-    status = database.get_daily_tips_status(user_id)
+    status = await asyncio.to_thread(database.get_daily_tips_status, user_id)
     builder = InlineKeyboardBuilder()
     if status == 1:
         builder.button(text="🔕 Obunani bekor qilish", callback_data="tips_unsubscribe")
@@ -1601,7 +2187,7 @@ async def daily_tips_menu(message: types.Message):
 
 @dp.callback_query(F.data == "tips_subscribe")
 async def tips_subscribe(callback: types.CallbackQuery):
-    database.set_daily_tips_subscription(callback.from_user.id, 1)
+    await asyncio.to_thread(database.set_daily_tips_subscription, callback.from_user.id, 1)
     await callback.message.edit_text(
         "✅ <b>Obuna bo'ldingiz!</b>\n\n"
         "Har kuni soat 08:00 da sog'liq bo'yicha yangi maslahat olasiz. 🌅\n\n"
@@ -1612,7 +2198,7 @@ async def tips_subscribe(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "tips_unsubscribe")
 async def tips_unsubscribe(callback: types.CallbackQuery):
-    database.set_daily_tips_subscription(callback.from_user.id, 0)
+    await asyncio.to_thread(database.set_daily_tips_subscription, callback.from_user.id, 0)
     await callback.message.edit_text(
         "🔕 <b>Obuna bekor qilindi.</b>\n\n"
         "Istalgan vaqt qaytadan obuna bo'lishingiz mumkin.",
@@ -1641,7 +2227,10 @@ async def send_daily_tips():
     )
 
     tip_text = await get_gemini_response(prompt)
-    subscribers = database.get_daily_tips_subscribers()
+    if any(msg in tip_text for msg in ["AI vaqtincha ishlamayapti", "limiti", "sozlanmagan", "kaliti xato"]):
+        logging.error("AI error received, skipping daily tips broadcast.")
+        return
+    subscribers = await asyncio.to_thread(database.get_daily_tips_subscribers)
 
     logging.info(f"Kunlik maslahat {len(subscribers)} ta obunachiga yuborilmoqda...")
     sent, failed = 0, 0
@@ -1668,26 +2257,92 @@ async def check_and_send_reminders():
     from datetime import timezone, timedelta
     uz_tz = timezone(timedelta(hours=5))
     while True:
-        now_time = datetime.now(uz_tz).strftime("%H:%M")
-        reminders = database.get_all_active_reminders()
-        for rem_id, user_id, medicine_name, times_str in reminders:
+        now_dt = datetime.now(uz_tz)
+        now_time = now_dt.strftime("%H:%M")
+        # Bugun necha-kunchi kun? (0 = toq, 1 = juft)
+        day_of_year = now_dt.timetuple().tm_yday
+        reminders = await asyncio.to_thread(database.get_all_active_reminders)
+        for rem_id, user_id, medicine_name, times_str, days in reminders:
+            # Kunora bo'lsa faqat toq kunlarda yuboramiz
+            if days == "every_other" and day_of_year % 2 == 0:
+                continue
             times_list = [t.strip() for t in times_str.split(",")]
             if now_time in times_list:
                 try:
+                    # Timestamp qo'shamiz (yordamchi sifatida, orqaga moslik uchun)
+                    sent_ts = int(datetime.now().timestamp())
+                    builder = InlineKeyboardBuilder()
+                    builder.button(text="✅ Ichdim", callback_data=f"med_taken_{rem_id}_{sent_ts}")
+                    builder.button(text="❌ Ichmadim", callback_data=f"med_missed_{rem_id}_{sent_ts}")
+                    builder.adjust(2)
                     await bot.send_message(
                         chat_id=user_id,
                         text=(
                             f"💊 <b>Dori ichish vaqti!</b>\n\n"
                             f"🕐 Vaqt: <b>{now_time}</b>\n"
                             f"💊 Dori: <b>{medicine_name}</b>\n\n"
-                            f"Sog'lig'ingizga e'tibor bering! 🌟"
+                            f"Dorini ichdingizmi? 👇"
                         ),
+                        reply_markup=builder.as_markup(),
                         parse_mode="HTML"
                     )
                 except Exception as e:
                     logging.warning(f"Eslatma yuborib bo'lmadi (user: {user_id}): {e}")
         # Har 60 soniyada tekshiramiz
         await asyncio.sleep(60)
+
+
+@dp.callback_query(F.data.startswith("med_taken_"))
+async def medicine_taken_handler(callback: types.CallbackQuery):
+    """Foydalanuvchi dorini ichganini tasdiqladi"""
+    await callback.message.edit_text(
+        f"✅ <b>Dorini ichganingiz tasdiqlandi!</b>\n\n"
+        f"Sog'lig'ingizga e'tiborli bo'lganingiz uchun rahmat! Dorilarni o'z vaqtida ichish juda muhim. 🌸",
+        parse_mode="HTML"
+    )
+    await callback.answer("Tasdiqlandi!")
+
+
+@dp.callback_query(F.data.startswith("med_missed_"))
+async def medicine_missed_handler(callback: types.CallbackQuery):
+    """Foydalanuvchi dorini ichmaganini bildirdi"""
+    await callback.message.edit_text(
+        f"⚠️ <b>Dorini ichishni unutmang!</b>\n\n"
+        f"Sog'lig'ingiz uchun dorilarni o'z vaqtida ichish juda muhim. Keyingi safar e'tiborliroq bo'ling! 🩺",
+        parse_mode="HTML"
+    )
+    await callback.answer("Keyingi safar ichishni unutmang!")
+
+
+
+@dp.message(F.web_app_data)
+async def web_app_data_handler(message: types.Message):
+    """Mini App'dan kelgan ma'lumotlarni qayta ishlash"""
+    try:
+        data = json.loads(message.web_app_data.data)
+        if data.get("action") == "ai_consult":
+            body_part_title = data.get("title", "noma'lum a'zo")
+            user_id = message.from_user.id
+            
+            await message.answer(
+                f"🤖 <b>AI Konsultatsiya ({body_part_title}):</b>\n\n"
+                f"Siz <b>{body_part_title}</b> sohasidagi muammoni tanladingiz.\n"
+                f"Tahlil qilinmoqda, iltimos kuting... ⏳",
+                parse_mode="HTML"
+            )
+            
+            prompt = (
+                f"Foydalanuvchi inson tanasidagi '{body_part_title}' sohasida og'riq yoki bezovtalik borligini bildirdi. "
+                f"Ushbu tana a'zosi bo'yicha eng ko'p uchraydigan kasalliklar, ularning kelib chiqish sabablari va "
+                f"uy sharoitida birinchi yordam hamda shifokorga qachon murojaat qilish kerakligi haqida atroflicha, "
+                f"chiroyli va tushunarli o'zbek tilida maslahat ber."
+            )
+            
+            ai_response = await get_gemini_response(prompt)
+            await message.answer(ai_response, parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"web_app_data xatolik: {e}")
+        await message.answer("⚠️ Ma'lumotlarni qayta ishlashda xatolik yuz berdi.")
 
 # ═══════════════════════════════════════════════════════════════════
 # KUNLIK TAVSIYA SCHEDULER (har kuni 08:00 da)
@@ -1707,6 +2362,120 @@ async def daily_tips_scheduler():
         logging.info(f"Keyingi kunlik maslahat {wait_seconds/3600:.1f} soatdan keyin yuboriladi.")
         await asyncio.sleep(wait_seconds)
         await send_daily_tips()
+
+# ═══════════════════════════════════════════════════════════════════
+# ERTALABKI SALOM VA KASALLIKLAR HAQIDA MA'LUMOT SCHEDULER (08:30 va 10:30)
+# ═══════════════════════════════════════════════════════════════════
+
+async def morning_greeting_scheduler():
+    """Har kuni 08:30 da barcha foydalanuvchilarga salom yuboradi (tibbiy profilga moslashtirilgan holda)"""
+    from datetime import timezone, timedelta
+    uz_tz = timezone(timedelta(hours=5))
+    while True:
+        now = datetime.now(uz_tz)
+        target = now.replace(hour=8, minute=30, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        wait_seconds = (target - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+        
+        users = await asyncio.to_thread(database.get_all_users)
+        if not users:
+            continue
+            
+        # 1. Umumiy salom matnini bir marta tayyorlab olamiz (profili yo'qlar uchun)
+        prompt_gen = "Ertalabki chiroyli, motivatsion salomlashish matni yoz (qisqa, 1-2 gap, emojilar bilan). Bot foydalanuvchilariga kunni yaxshi boshlashlari uchun yuboriladi."
+        general_greeting = await get_gemini_response(prompt_gen)
+        is_gen_failed = any(msg in general_greeting for msg in ["AI vaqtincha ishlamayapti", "limiti", "sozlanmagan", "kaliti xato"])
+        
+        logging.info(f"Ertalabki salom {len(users)} ta foydalanuvchiga yuborilmoqda...")
+        for user_id in users:
+            try:
+                profile = await asyncio.to_thread(database.get_medical_profile, user_id)
+                blood_group, age, weight, height, chronic, allergies = profile if profile else (None,)*6
+                
+                # Agar profil to'ldirilgan bo'lsa - moslashtirilgan xabar beramiz
+                if chronic or age or allergies or blood_group:
+                    no_val = "yo'q"
+                    profile_str = f"Yosh: {age or '—'}, Qon guruhi: {blood_group or '—'}, Surunkali kasalliklar: {chronic or no_val}, Allergiyalar: {allergies or no_val}."
+                    prompt_pers = (
+                        f"Foydalanuvchi tibbiy profili: {profile_str}. "
+                        "Ushbu ma'lumotlarga mos holda, uni o'z sog'lig'iga e'tibor berishga undaydigan, "
+                        "shaxsiy 1 ta foydali tibbiy fakt yoki tavsiya va ertalabki salomlashish matnini yoz. "
+                        "Matn juda qisqa (1-2 gap), samimiy va emojilar bilan bo'lsin. "
+                        "Matn oxirida foydalanuvchini botga kirib batafsil so'rashga undang (masalan: 'Batafsil maslahat olish uchun botga yozing!')."
+                    )
+                    greeting_text = await get_gemini_response(prompt_pers)
+                    
+                    if any(msg in greeting_text for msg in ["AI vaqtincha ishlamayapti", "limiti", "sozlanmagan", "kaliti xato"]):
+                        greeting_text = general_greeting if not is_gen_failed else "Assalomu alaykum! Kuningiz xayrli va barakali o'tsin. Sog'ligingizga e'tiborli bo'ling!"
+                    
+                    await bot.send_message(chat_id=user_id, text=markdown_to_html(greeting_text), parse_mode="HTML")
+                    await asyncio.sleep(2.0) # API rate limitdan oshib ketmaslik uchun
+                else:
+                    # Umumiy salom
+                    msg_to_send = general_greeting if not is_gen_failed else "Assalomu alaykum! Kuningiz xayrli va barakali o'tsin. Sog'ligingizga e'tiborli bo'ling!"
+                    await bot.send_message(chat_id=user_id, text=markdown_to_html(msg_to_send), parse_mode="HTML")
+                    await asyncio.sleep(0.05) # Telegram spaming limitini hurmat qilish uchun
+            except Exception as e:
+                logging.warning(f"Failed to send morning greeting to {user_id}: {e}")
+                await asyncio.sleep(0.05)
+
+async def daily_disease_info_scheduler():
+    """Har kuni 10:30 da noodatiy va shaxsiy tahliliy kasalliklar haqida ma'lumot yuboradi"""
+    from datetime import timezone, timedelta
+    uz_tz = timezone(timedelta(hours=5))
+    while True:
+        now = datetime.now(uz_tz)
+        target = now.replace(hour=10, minute=30, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        wait_seconds = (target - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+        
+        users = await asyncio.to_thread(database.get_all_users)
+        if not users:
+            continue
+            
+        # 1. Umumiy qiziqarli kasallik faktini tayyorlaymiz
+        prompt_gen = (
+            "Hozirgi kunda rivojlanayotgan yoki kam uchraydigan bitta noodatiy kasallik haqida qiziqarli qisqacha ma'lumot yoz. "
+            "Matn oxirida foydalanuvchilarni qiziqtirish uchun 'Bu kasallikka davo topishni yoki asoratlari haqida bilishni xohlaysizmi? Unda menga to'g'ridan-to'g'ri murojaat qiling!' deb yoz. "
+            "Matn 200 so'zdan oshmasin, emojilar qo'shilgan, jozibali bo'lsin."
+        )
+        general_info = await get_gemini_response(prompt_gen)
+        is_gen_failed = any(msg in general_info for msg in ["AI vaqtincha ishlamayapti", "limiti", "sozlanmagan", "kaliti xato"])
+        
+        logging.info(f"Kasalliklar haqida ma'lumot {len(users)} ta foydalanuvchiga yuborilmoqda...")
+        for user_id in users:
+            try:
+                profile = await asyncio.to_thread(database.get_medical_profile, user_id)
+                blood_group, age, weight, height, chronic, allergies = profile if profile else (None,)*6
+                
+                # Agar surunkali kasallik yoki allergiyasi bo'lsa - unga mosroq ma'lumot chiqaramiz
+                if chronic or allergies:
+                    no_val = "yo'q"
+                    prompt_pers = (
+                        f"Foydalanuvchi tibbiy profili: Surunkali kasalliklar: {chronic or no_val}, Allergiyalar: {allergies or no_val}. "
+                        "Ushbu holatlarga yoki ularning asoratlariga bog'liq bo'lgan bitta jiddiy tibbiy xavf, kasallik yoki qiziqarli fakt haqida matn yoz. "
+                        "Matn oxirida uni qiziqtirish uchun 'Ushbu holatdan asranish yo'llarini yoki asoratlari haqida bilishni xohlaysizmi? Unda menga yozing!' deb yozing. "
+                        "Matn 200 so'zdan oshmasin, o'zbek tilida, emojilar bilan bo'lsin."
+                    )
+                    disease_text = await get_gemini_response(prompt_pers)
+                    
+                    if any(msg in disease_text for msg in ["AI vaqtincha ishlamayapti", "limiti", "sozlanmagan", "kaliti xato"]):
+                        disease_text = general_info if not is_gen_failed else "Sog'lom turmush tarzi va profilaktika haqida bilish uchun botimizdan foydalaning!"
+                    
+                    await bot.send_message(chat_id=user_id, text=markdown_to_html(disease_text), parse_mode="HTML")
+                    await asyncio.sleep(2.0) # API limitini saqlash uchun
+                else:
+                    # Umumiy ma'lumot
+                    msg_to_send = general_info if not is_gen_failed else "Sog'lom turmush tarzi va profilaktika haqida bilish uchun botimizdan foydalaning!"
+                    await bot.send_message(chat_id=user_id, text=markdown_to_html(msg_to_send), parse_mode="HTML")
+                    await asyncio.sleep(0.05)
+            except Exception as e:
+                logging.warning(f"Failed to send disease info to {user_id}: {e}")
+                await asyncio.sleep(0.05)
 
 # ═══════════════════════════════════════════════════════════════════
 # ADMIN BUYRUQLARI
@@ -1768,7 +2537,7 @@ async def _resolve_users_info(users_info):
                 chat = await bot.get_chat(user_id)
                 full_name = f"{chat.first_name or ''} {chat.last_name or ''}".strip() or f"User {user_id}"
                 username = chat.username
-                database.register_user(user_id, full_name=full_name, username=username)
+                await asyncio.to_thread(database.register_user, user_id, full_name=full_name, username=username)
             except Exception:
                 full_name = f"User {user_id}"
                 
@@ -1780,11 +2549,12 @@ async def _resolve_users_info(users_info):
 async def cmd_premium(message: types.Message):
     """Admin uchun interaktiv Premium boshqaruvi"""
     if str(message.from_user.id) != str(ADMIN_ID):
-        return
-    raw_users = database.get_all_users_info(limit=15)
+        # Oddiy foydalanuvchilar uchun Premium sahifasini ko'rsatish
+        return await _show_premium_page(message)
+    raw_users = await asyncio.to_thread(database.get_all_users_info, limit=15)
     users_info = await _resolve_users_info(raw_users)
-    total = database.get_users_count()
-    premium_count = database.get_premium_count()
+    total = await asyncio.to_thread(database.get_users_count)
+    premium_count = await asyncio.to_thread(database.get_premium_count)
     text = _build_premium_list_text(users_info, total, premium_count)
     markup = _build_premium_list_keyboard(users_info)
     await message.answer(text, reply_markup=markup, parse_mode="HTML")
@@ -1796,10 +2566,10 @@ async def cb_pm_refresh(callback: types.CallbackQuery):
     if str(callback.from_user.id) != str(ADMIN_ID):
         await callback.answer("❌ Siz admin emassiz!", show_alert=True)
         return
-    raw_users = database.get_all_users_info(limit=15)
+    raw_users = await asyncio.to_thread(database.get_all_users_info, limit=15)
     users_info = await _resolve_users_info(raw_users)
-    total = database.get_users_count()
-    premium_count = database.get_premium_count()
+    total = await asyncio.to_thread(database.get_users_count)
+    premium_count = await asyncio.to_thread(database.get_premium_count)
     text = _build_premium_list_text(users_info, total, premium_count)
     markup = _build_premium_list_keyboard(users_info)
     try:
@@ -1818,7 +2588,7 @@ async def cb_pm_toggle(callback: types.CallbackQuery):
     try:
         target_id = int(callback.data.replace("pm_toggle_", ""))
         # Hozirgi holatni aniq bilish
-        raw_all = database.get_all_users_info(limit=100)
+        raw_all = await asyncio.to_thread(database.get_all_users_info, limit=100)
         current_status = 0
         for row in raw_all:
             uid = row[0]
@@ -1827,16 +2597,122 @@ async def cb_pm_toggle(callback: types.CallbackQuery):
                 current_status = is_prem
                 break
         new_status = 0 if current_status else 1
-        database.set_premium(target_id, new_status)
+        await asyncio.to_thread(database.set_premium, target_id, new_status)
         action_text = "🌟 Premium berildi!" if new_status else "❌ Premium olib tashlandi!"
         await callback.answer(f"{action_text} (ID: {target_id})", show_alert=True)
         # Ro'yxatni yangilash
-        raw_users = database.get_all_users_info(limit=15)
+        raw_users = await asyncio.to_thread(database.get_all_users_info, limit=15)
         users_info = await _resolve_users_info(raw_users)
-        total = database.get_users_count()
-        premium_count = database.get_premium_count()
+        total = await asyncio.to_thread(database.get_users_count)
+        premium_count = await asyncio.to_thread(database.get_premium_count)
         text = _build_premium_list_text(users_info, total, premium_count)
         markup = _build_premium_list_keyboard(users_info)
+        try:
+            await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        except Exception:
+            pass
+    except Exception as e:
+        await callback.answer(f"Xatolik: {e}", show_alert=True)
+
+
+def _build_ban_list_keyboard(users_info):
+    """Ban boshqaruv uchun keyboard quradi"""
+    builder = InlineKeyboardBuilder()
+    for row in users_info:
+        user_id, is_banned = row[0], row[1]
+        full_name = row[3] if len(row) > 3 else None
+        display = full_name or f"ID:{user_id}"
+        status_icon = "🚫" if is_banned else "👤"
+        action = "✅ Unban" if is_banned else "🚫 Ban qilish"
+        builder.button(
+            text=f"{status_icon} {display} — {action}",
+            callback_data=f"ban_toggle_{user_id}"
+        )
+    builder.button(text="🔄 Yangilash", callback_data="ban_refresh")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def _build_ban_list_text(users_info, total, banned_count):
+    """Ban ro'yxat matni"""
+    text = (
+        f"🚫 <b>Ban Boshqaruvi</b>\n\n"
+        f"👥 Jami foydalanuvchilar: <b>{total}</b>\n"
+        f"🚫 Bloklanganlar: <b>{banned_count}</b>\n\n"
+        f"<b>So'nggi {len(users_info)} ta foydalanuvchi:</b>\n"
+        "─────────────────\n"
+    )
+    for row in users_info:
+        user_id, is_banned = row[0], row[1]
+        full_name = row[3] if len(row) > 3 else None
+        username = row[4] if len(row) > 4 else None
+        icon = "🚫" if is_banned else "👤"
+        name_str = full_name or "Noma'lum"
+        uname_str = f" (@{username})" if username else ""
+        ban_str = "Bloklangan" if is_banned else "Faol"
+        text += f"{icon} <b>{name_str}</b>{uname_str}\n"
+        text += f"   🆔 <code>{user_id}</code>  |  {ban_str}\n\n"
+    text += "Tugma bosib foydalanuvchini ban qilishingiz yoki bandan chiqarishingiz mumkin 👇"
+    return text
+
+
+@dp.callback_query(F.data == "ban_refresh")
+async def cb_ban_refresh(callback: types.CallbackQuery):
+    """Ban ro'yxatini yangilash"""
+    if str(callback.from_user.id) != str(ADMIN_ID):
+        await callback.answer("❌ Siz admin emassiz!", show_alert=True)
+        return
+    raw_users = await asyncio.to_thread(database.get_all_users_info_ban, limit=15)
+    users_info = await _resolve_users_info(raw_users)
+    total = await asyncio.to_thread(database.get_users_count)
+    banned_count = await asyncio.to_thread(database.get_banned_count)
+    text = _build_ban_list_text(users_info, total, banned_count)
+    markup = _build_ban_list_keyboard(users_info)
+    try:
+        await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("🔄 Yangilandi!")
+
+
+@dp.callback_query(F.data.startswith("ban_toggle_"))
+async def cb_ban_toggle(callback: types.CallbackQuery):
+    """Foydalanuvchini ban qilish yoki bandan chiqarish"""
+    if str(callback.from_user.id) != str(ADMIN_ID):
+        await callback.answer("❌ Siz admin emassiz!", show_alert=True)
+        return
+    try:
+        target_id = int(callback.data.replace("ban_toggle_", ""))
+        if str(target_id) == str(ADMIN_ID):
+            await callback.answer("❌ O'zingizni ban qila olmaysiz!", show_alert=True)
+            return
+            
+        # Get current status
+        raw_all = await asyncio.to_thread(database.get_all_users_info_ban, limit=100)
+        current_status = 0
+        for row in raw_all:
+            uid = row[0]
+            is_banned = row[1]
+            if uid == target_id:
+                current_status = is_banned
+                break
+                
+        if current_status:
+            await asyncio.to_thread(database.unban_user, target_id)
+            action_text = "✅ Bandan chiqarildi!"
+        else:
+            await asyncio.to_thread(database.ban_user, target_id)
+            action_text = "🚫 Doimiy ban qilindi!"
+            
+        await callback.answer(f"{action_text} (ID: {target_id})", show_alert=True)
+        
+        # Refresh ro'yxat
+        raw_users = await asyncio.to_thread(database.get_all_users_info_ban, limit=15)
+        users_info = await _resolve_users_info(raw_users)
+        total = await asyncio.to_thread(database.get_users_count)
+        banned_count = await asyncio.to_thread(database.get_banned_count)
+        text = _build_ban_list_text(users_info, total, banned_count)
+        markup = _build_ban_list_keyboard(users_info)
         try:
             await callback.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
         except Exception:
@@ -1849,11 +2725,11 @@ async def cb_pm_toggle(callback: types.CallbackQuery):
 async def cmd_stats(message: types.Message):
     """Admin uchun statistika: /stats"""
     if str(message.from_user.id) != str(ADMIN_ID):
-        return
-    total = database.get_users_count()
-    premium = database.get_premium_count()
-    subscribers = len(database.get_daily_tips_subscribers())
-    reminders_count = len(database.get_all_active_reminders())
+        return await message.answer("❌ Sizda bu buyruqdan foydalanish huquqi yo'q.")
+    total = await asyncio.to_thread(database.get_users_count)
+    premium = await asyncio.to_thread(database.get_premium_count)
+    subscribers = len(await asyncio.to_thread(database.get_daily_tips_subscribers))
+    reminders_count = len(await asyncio.to_thread(database.get_all_active_reminders))
     await message.answer(
         f"📊 <b>Bot Statistikasi</b>\n\n"
         f"👥 Jami foydalanuvchilar: <b>{total}</b>\n"
@@ -1864,70 +2740,193 @@ async def cmd_stats(message: types.Message):
     )
 
 
-@dp.message(Command("broadcast"))
-async def cmd_broadcast(message: types.Message):
-    """Barcha foydalanuvchilarga xabar yuborish: /broadcast <matn> yoki reply qilib /broadcast"""
+@dp.message(Command("cancel"))
+async def cmd_cancel_broadcast(message: types.Message, state: FSMContext):
+    """Adminga broadcastni bekor qilish imkonini beradi."""
     if str(message.from_user.id) != str(ADMIN_ID):
-        return
+        return await message.answer("❌ Sizda bu buyruqdan foydalanish huquqi yo'q.")
+    
+    current_state = await state.get_state()
+    if current_state in [BroadcastStates.waiting_for_content.state, BroadcastStates.waiting_for_confirmation.state]:
+        await state.clear()
+        await message.answer("❌ Broadcast bekor qilindi.", reply_markup=get_start_keyboard())
+    else:
+        await message.answer("Bekor qilinadigan faol broadcast yo'q.")
+
+@dp.message(Command("broadcast"))
+async def cmd_broadcast(message: types.Message, state: FSMContext):
+    """Barcha foydalanuvchilarga xabar yuborish (Yangi FSM usuli)"""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return await message.answer("❌ Sizda bu buyruqdan foydalanish huquqi yo'q.")
     
     reply = message.reply_to_message
-    text = None
     
-    if not reply:
-        parts = message.text.split(maxsplit=1)
-        if len(parts) < 2:
-            await message.answer(
-                "📢 <b>Kanalga xabar tarqatish (Broadcast):</b>\n\n"
-                "1. Biror xabarga reply qilib <code>/broadcast</code> deb yozing (rasm, video, ovoz va h.k. o'tadi)\n"
-                "2. <code>/broadcast Xabar matni</code> shaklida yozing.",
-                parse_mode="HTML"
-            )
-            return
-        text = parts[1]
+    if reply:
+        # Method 2: Reply qilingan xabarni tarqatish
+        await state.set_state(BroadcastStates.waiting_for_confirmation)
+        await state.update_data(broadcast_msg_id=reply.message_id)
+        users_count = await asyncio.to_thread(database.get_users_count)
         
-    users = database.get_all_users()
-    sent, failed = 0, 0
-    status = await message.answer(f"📢 {len(users)} ta foydalanuvchiga yuborilmoqda...")
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Yuborish", callback_data="broadcast_confirm")
+        kb.button(text="❌ Bekor qilish", callback_data="broadcast_cancel")
+        kb.adjust(2)
+        
+        await message.answer(
+            f"📢 <b>Xabar tayyor.</b>\n\n👥 Qabul qiluvchilar: {users_count} ta\n\nYuborishni tasdiqlaysizmi?",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup()
+        )
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) > 1:
+        # Method 3: Tezkor matnli xabar
+        await state.set_state(BroadcastStates.waiting_for_confirmation)
+        await state.update_data(broadcast_text=parts[1])
+        users_count = await asyncio.to_thread(database.get_users_count)
+        
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Yuborish", callback_data="broadcast_confirm")
+        kb.button(text="❌ Bekor qilish", callback_data="broadcast_cancel")
+        kb.adjust(2)
+        
+        await message.answer(
+            f"📢 <b>Xabar tayyor.</b>\n\n📝 Turi: Matn\n👥 Qabul qiluvchilar: {users_count} ta\n\nYuborishni tasdiqlaysizmi?",
+            parse_mode="HTML",
+            reply_markup=kb.as_markup()
+        )
+        return
+
+    # Method 1: Kontent kutish
+    await state.set_state(BroadcastStates.waiting_for_content)
+    await message.answer(
+        "📢 <b>Broadcast</b>\n\n"
+        "Xabarni yuboring.\n"
+        "Matn, rasm, video, ovozli xabar yoki fayl yuborishingiz mumkin.\n\n"
+        "❌ Bekor qilish: /cancel",
+        parse_mode="HTML"
+    )
+
+@dp.message(StateFilter(BroadcastStates.waiting_for_content))
+async def process_broadcast_content(message: types.Message, state: FSMContext):
+    """Admin yuborgan kontentni qabul qilib, tasdiqlashni so'raydi."""
+    if str(message.from_user.id) != str(ADMIN_ID):
+        return
+        
+    await state.set_state(BroadcastStates.waiting_for_confirmation)
+    await state.update_data(broadcast_msg_id=message.message_id)
     
-    for user_id in users:
+    users_count = await asyncio.to_thread(database.get_users_count)
+    
+    # Aniqlash (faqat ko'rsatish uchun)
+    msg_type = "Matn"
+    if message.photo: msg_type = "Rasm"
+    elif message.video: msg_type = "Video"
+    elif message.audio: msg_type = "Audio"
+    elif message.voice: msg_type = "Ovozli xabar"
+    elif message.document: msg_type = "Fayl"
+    elif message.animation: msg_type = "GIF/Animatsiya"
+    elif message.sticker: msg_type = "Stiker"
+    
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Yuborish", callback_data="broadcast_confirm")
+    kb.button(text="❌ Bekor qilish", callback_data="broadcast_cancel")
+    kb.adjust(2)
+    
+    await message.answer(
+        f"📢 <b>Broadcast tayyor</b>\n\n"
+        f"📝 Turi: {msg_type}\n"
+        f"👥 Qabul qiluvchilar: {users_count} ta\n\n"
+        f"Yuborishni tasdiqlaysizmi?",
+        parse_mode="HTML",
+        reply_markup=kb.as_markup()
+    )
+
+@dp.callback_query(F.data.in_(["broadcast_confirm", "broadcast_cancel"]), StateFilter(BroadcastStates.waiting_for_confirmation))
+async def process_broadcast_confirmation(callback: types.CallbackQuery, state: FSMContext):
+    """Tasdiqlash yoki bekor qilishni qayta ishlaydi."""
+    if str(callback.from_user.id) != str(ADMIN_ID):
+        return await callback.answer("Ruxsat yo'q", show_alert=True)
+        
+    if callback.data == "broadcast_cancel":
+        await state.clear()
+        await callback.message.edit_text("❌ Broadcast bekor qilindi.")
+        return
+
+    # Tasdiqlandi
+    data = await state.get_data()
+    msg_id = data.get("broadcast_msg_id")
+    text_content = data.get("broadcast_text")
+    
+    await state.clear()  # Adminga boshqa ishlarni qilishga ruxsat beramiz
+    
+    users = await asyncio.to_thread(database.get_all_users)
+    total = len(users)
+    
+    progress_msg = await callback.message.edit_text(f"📤 Xabar yuborilmoqda...\n\n👥 Jami: {total}")
+    
+    sent, failed = 0, 0
+    
+    for i, user_id in enumerate(users):
         try:
-            if reply:
+            if msg_id:
                 # Xabarni barcha formatlari bilan to'liq nusxalab yuboramiz
                 await bot.copy_message(
                     chat_id=user_id,
-                    from_chat_id=message.chat.id,
-                    message_id=reply.message_id
+                    from_chat_id=callback.message.chat.id,
+                    message_id=msg_id
                 )
-            else:
+            elif text_content:
                 # HTML parse xatolaridan himoya qilamiz
                 try:
-                    await bot.send_message(chat_id=user_id, text=text, parse_mode="HTML")
+                    await bot.send_message(chat_id=user_id, text=text_content, parse_mode="HTML")
                 except Exception:
-                    await bot.send_message(chat_id=user_id, text=text, parse_mode=None)
+                    await bot.send_message(chat_id=user_id, text=text_content, parse_mode=None)
             sent += 1
-            await asyncio.sleep(0.05)
         except Exception:
             failed += 1
             
-    await status.edit_text(
-        f"✅ Broadcast tugadi!\n📤 Yuborildi: {sent}\n❌ Yuborib bo'lmadi: {failed}"
+        await asyncio.sleep(0.05) # Rate limitdan saqlanish
+        
+        # Har 100 ta xabarda progressni yangilash (Telegram API ni zo'riqtirmaslik uchun)
+        if (i + 1) % 100 == 0:
+            try:
+                await progress_msg.edit_text(
+                    f"📤 Xabar yuborilmoqda...\n\n"
+                    f"✅ Yuborildi: {sent}\n"
+                    f"❌ Xato: {failed}\n"
+                    f"👥 Jami: {total}"
+                )
+            except Exception:
+                pass # EditMessage too often xatosini o'tkazib yuborish
+                
+    # Yakuniy hisobot
+    await progress_msg.edit_text(
+        f"📢 <b>Broadcast tugadi!</b>\n\n"
+        f"👥 Jami: {total}\n"
+        f"✅ Muvaffaqiyatli: {sent}\n"
+        f"❌ Xatolik (Bloklaganlar/O'chirilganlar): {failed}",
+        parse_mode="HTML"
     )
 
 @dp.message(Command("ban"))
 async def cmd_ban(message: types.Message):
-    """Adminga foydalanuvchini ban qilish: /ban <user_id> [minutes]"""
+    """Adminga foydalanuvchini ban qilish: /ban yoki /ban <user_id> [minutes]"""
     if str(message.from_user.id) != str(ADMIN_ID):
-        return
+        return await message.answer("❌ Sizda bu buyruqdan foydalanish huquqi yo'q.")
     parts = message.text.split()
     if len(parts) < 2:
-        await message.answer(
-            "Foydalanish: /ban <code>&lt;user_id&gt;</code> [daqiqalar]\n\n"
-            "Masalan:\n"
-            "• <code>/ban 12345678</code> (doimiy ban)\n"
-            "• <code>/ban 12345678 60</code> (1 soatlik vaqtinchalik ban)",
-            parse_mode="HTML"
-        )
+        # Interactive Mode
+        raw_users = await asyncio.to_thread(database.get_all_users_info_ban, limit=15)
+        users_info = await _resolve_users_info(raw_users)
+        total = await asyncio.to_thread(database.get_users_count)
+        banned_count = await asyncio.to_thread(database.get_banned_count)
+        text = _build_ban_list_text(users_info, total, banned_count)
+        markup = _build_ban_list_keyboard(users_info)
+        await message.answer(text, reply_markup=markup, parse_mode="HTML")
         return
+        
     try:
         user_id = int(parts[1])
         minutes = int(parts[2]) if len(parts) >= 3 else None
@@ -1936,7 +2935,7 @@ async def cmd_ban(message: types.Message):
             await message.answer("❌ O'zingizni ban qila olmaysiz!")
             return
             
-        database.ban_user(user_id, minutes)
+        await asyncio.to_thread(database.ban_user, user_id, minutes)
         if minutes:
             await message.answer(f"✅ Foydalanuvchi {user_id} {minutes} daqiqaga vaqtinchalik ban qilindi.")
         else:
@@ -1950,7 +2949,7 @@ async def cmd_ban(message: types.Message):
 async def cmd_unban(message: types.Message):
     """Adminga foydalanuvchini bandan chiqarish: /unban <user_id>"""
     if str(message.from_user.id) != str(ADMIN_ID):
-        return
+        return await message.answer("❌ Sizda bu buyruqdan foydalanish huquqi yo'q.")
     parts = message.text.split()
     if len(parts) < 2:
         await message.answer(
@@ -1961,7 +2960,7 @@ async def cmd_unban(message: types.Message):
         return
     try:
         user_id = int(parts[1])
-        database.unban_user(user_id)
+        await asyncio.to_thread(database.unban_user, user_id)
         await message.answer(f"✅ Foydalanuvchi {user_id} bandan chiqarildi.")
     except ValueError:
         await message.answer("❌ Xatolik: user_id butun son bo'lishi kerak!")
@@ -1979,10 +2978,11 @@ async def handle_ai_chat(message: types.Message, state: FSMContext):
     # Reply tugmalarni tekshirish (ehtiyot chorasi sifatida qoldiramiz)
     skip_texts = [
         "📋 Holatlar ro'yxati", "🚨 Favqulodda raqamlar",
-        "📚 Kasalliklar Ro'yxati (100+)", "💬 AI Konsultatsiya (Chat)",
-        "🏥 Eng yaqin kasalxona", "💎 Premium olish",
+        "📚 Kasalliklar", "💬 AI Konsultatsiya",
+        "🏥 Yaqin kasalxona", "💎 Premium",
         "👤 Tibbiy Profilim", "💊 Dori Eslatmalari",
-        "⚖️ Sog'liq Kalkulyatori", "🔔 Kunlik Maslahatlar"
+        "⚖️ Sog'liq Kalkulyatori", "🔔 Kunlik Maslahatlar",
+        "👥 Do'stlarni taklif qilish", "🌐 Mening ballarim"
     ]
     if message.text in skip_texts:
         return
@@ -1990,10 +2990,10 @@ async def handle_ai_chat(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
 
     # 1 ta bepul savol tizimi: bepul savol ishlatilganmi tekshiramiz
-    if database.check_free_ai_used(user_id):
+    if await asyncio.to_thread(database.check_free_ai_used, user_id):
         # Bepul limit tugagan — premium talab qilamiz
         builder = InlineKeyboardBuilder()
-        builder.button(text="💎 Premium olish", callback_data="buy_premium")
+        builder.button(text="💎 Premium", callback_data="buy_premium")
         builder.adjust(1)
         await message.answer(
             "🔒 <b>Bepul AI savollar limiti tugadi!</b>\n\n"
@@ -2004,6 +3004,10 @@ async def handle_ai_chat(message: types.Message, state: FSMContext):
             "• 🎙️ Ovozli konsultatsiya\n"
             "• 📚 Kasalliklar batafsil tahlili\n"
             "• 🩺 Shaxsiy tibbiy maslahat\n\n"
+            "🎁 <b>Bepul Premium olish yo'li:</b>\n"
+            "• 🔥 Har kuni botga kirib, kunlik bonus to'plang (1, 2, 3... ball)!\n"
+            "• 👥 Do'stingizni taklif qiling: <b>+10 ball</b> (5 ta do'st uchun: <b>🎁 +50 ball</b>!)\n"
+            "• 🎓 <b>100 ball</b> to'planganda bepul <b>Premium</b> faollashadi!\n\n"
             f"⭐ <b>{PREMIUM_STARS_PRICE} Telegram Stars</b> — 1 oylik.",
             reply_markup=builder.as_markup(),
             parse_mode="HTML"
@@ -2014,7 +3018,7 @@ async def handle_ai_chat(message: types.Message, state: FSMContext):
     placeholder = await message.answer("⏳ <b>Javob tayyorlanmoqda...</b>", parse_mode="HTML")
 
     # Tibbiy profilni qo'shish
-    profile = database.get_medical_profile(user_id)
+    profile = await asyncio.to_thread(database.get_medical_profile, user_id)
     profile_context = _build_profile_context(profile)
     full_prompt = message.text + profile_context
 
@@ -2024,8 +3028,8 @@ async def handle_ai_chat(message: types.Message, state: FSMContext):
         placeholder_text="⏳ <b>Javob tayyorlanmoqda...</b>"
     )
     # Bepul savolni ishlatdi deb belgilaymiz
-    database.set_free_ai_used(user_id)
-    database.increment_usage(user_id)
+    await asyncio.to_thread(database.set_free_ai_used, user_id)
+    await asyncio.to_thread(database.increment_usage, user_id)
 
 def _build_profile_context(profile) -> str:
     """Tibbiy profildan AI uchun kontekst yaratish"""
@@ -2062,23 +3066,25 @@ async def error_handler(event: types.ErrorEvent):
 # ═══════════════════════════════════════════════════════════════════
 
 async def set_bot_commands(bot_instance: Bot):
-    commands = [
-        types.BotCommand(command="start",   description="Botni ishga tushirish"),
-        types.BotCommand(command="menu",    description="Bosh menyu"),
-        types.BotCommand(command="help",    description="Yordam va yo'riqnoma"),
-        types.BotCommand(command="contacts",description="Tezkor telefon raqamlari"),
+    # ═══ FOYDALANUVCHI KOMANDALARI ═══
+    user_commands = [
+        types.BotCommand(command="start",        description="Botni ishga tushirish"),
+        types.BotCommand(command="menu",         description="Bosh menyu"),
+        types.BotCommand(command="help",         description="Yordam va yo'riqnoma"),
+        types.BotCommand(command="contacts",     description="Tezkor telefon raqamlari"),
+        types.BotCommand(command="premium",      description="💎 Premium — to'lash va tekin olish"),
     ]
-    await bot_instance.set_my_commands(commands)
+    await bot_instance.set_my_commands(user_commands)
 
-    # Admin uchun maxsus komandalar (faqat adminga ko'rinadi)
+    # ═══ ADMIN KOMANDALARI (user + admin) ═══
     if ADMIN_ID and str(ADMIN_ID).isdigit():
-        admin_commands = commands + [
-            types.BotCommand(command="stats",       description="📊 Bot statistikasi"),
-            types.BotCommand(command="broadcast",   description="📢 Ommaviy xabar yuborish"),
-            types.BotCommand(command="premium",     description="💎 Premium faollashtirish"),
-            types.BotCommand(command="ban",         description="🚫 Foydalanuvchini ban qilish"),
-            types.BotCommand(command="unban",       description="✅ Bandan chiqarish"),
+        admin_only_commands = [
+            types.BotCommand(command="stats",     description="📊 Bot statistikasi"),
+            types.BotCommand(command="broadcast", description="📢 Ommaviy xabar yuborish"),
+            types.BotCommand(command="ban",       description="🚫 Foydalanuvchini ban qilish"),
+            types.BotCommand(command="unban",     description="✅ Foydalanuvchini unban qilish"),
         ]
+        admin_commands = user_commands + admin_only_commands
         try:
             await bot_instance.set_my_commands(
                 commands=admin_commands,
@@ -2099,13 +3105,82 @@ async def set_bot_commands(bot_instance: Bot):
             logging.info("Bosh menyu tugmasi Mini Ilova-ga muvaffaqiyatli almashtirildi.")
         except Exception as e:
             logging.error(f"Menu tugmasini Mini Ilovaga almashtirishda xato: {e}")
+    else:
+        try:
+            await bot_instance.set_chat_menu_button(
+                menu_button=types.MenuButtonDefault()
+            )
+            logging.info("Bosh menyu tugmasi standart holatga qaytarildi.")
+        except Exception as e:
+            pass
 
 # ═══════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════
 
+@dp.message(Command("ballarim"))
+@dp.message(F.text.in_(["🌐 Mening ballarim", "Mening ballarim", "mening ballarim"]))
+async def cmd_ballarim(message: types.Message):
+    """Mening ballarim komandasi"""
+    user_id = message.from_user.id
+    score = await asyncio.to_thread(database.get_score, user_id)
+    is_prem, expires = await asyncio.to_thread(database.get_premium_info, user_id)
+    
+    msg = f"🏆 <b>Sizning ballaringiz:</b> {score} ball\n"
+    if is_prem:
+        msg += f"\n💎 Sizda <b>Premium</b> holati faol!\n📅 Amal qilish muddati: {expires}"
+    else:
+        msg += f"\n💡 Yana {max(0, 100 - score)} ball yig'sangiz, Premium avtomatik faollashadi!"
+        
+    await message.answer(msg, parse_mode="HTML", reply_markup=get_start_keyboard())
+
+# ==============================================================================
+# BARCHA QOLGAN XABARLAR UCHUN FALLBACK HANDLERLAR
+# Qoidalarga asosan eng pastga qo'yildi ki, asosiy handlerlarga xalaqit qilmasin
+# ==============================================================================
+
+@dp.message(F.audio)
+async def fallback_audio(message: types.Message):
+    logging.info("message_type=audio")
+    await message.reply("🎵 Audio qabul qilindi. Agar savolingiz bo'lsa, uni matn shaklida yoki ovozli xabar (voice) tarzida yuboring.")
+
+@dp.message(F.video)
+async def fallback_video(message: types.Message):
+    logging.info("message_type=video")
+    await message.reply("🎬 Video qabul qilindi. Qo'shimcha ma'lumot yoki savolingizni yuboring.")
+
+@dp.message(F.video_note)
+async def fallback_video_note(message: types.Message):
+    logging.info("message_type=video_note")
+    await message.reply("📹 Video xabar qabul qilindi. Qo'shimcha ma'lumot yoki savolingizni yuboring.")
+
+@dp.message(F.document)
+async def fallback_document(message: types.Message):
+    logging.info("message_type=document")
+    await message.reply("📄 Fayl qabul qilindi. Fayl bilan bog'liq savolingizni yozing.")
+
+@dp.message(F.contact)
+async def fallback_contact(message: types.Message):
+    logging.info("message_type=contact")
+    await message.reply("📞 Kontakt qabul qilindi.")
+
+# F.location handler yuqorida (handle_location) allaqachon aniqlangan — bu yerda takrorlanmaydi
+
+@dp.message(F.text)
+async def fallback_text(message: types.Message, state: FSMContext):
+    logging.info("message_type=text")
+    # Tizimdagi komandalarga yoki menyularga tushmagan har qanday oddiy matnni AI ga yo'naltiramiz
+    await state.set_state(AiChatStates.chatting)
+    await handle_ai_chat(message, state)
+
+@dp.message()
+async def fallback_all(message: types.Message):
+    msg_type = message.content_type
+    logging.info(f"message_type={msg_type}")
+    await message.reply("ℹ️ Bu turdagi xabar qabul qilindi, lekin hozircha uni qayta ishlash imkonim yo'q.")
+
 async def main():
-    database.init_db()
+    await asyncio.to_thread(database.init_db)
     
     # Diagnostic: list available models to debug 404 NOT FOUND
     if gemini_client:
@@ -2120,9 +3195,13 @@ async def main():
             print(f"❌ Modellarni yuklashda xatolik: {e}")
             
     # Middleware-larni ro'yxatdan o'tkazish
+    dp.message.outer_middleware(ThrottlingMiddleware())
+    dp.callback_query.outer_middleware(ThrottlingMiddleware())
     dp.message.outer_middleware(BanMiddleware())
     dp.callback_query.outer_middleware(BanMiddleware())
+    dp.callback_query.outer_middleware(AnswerCallbackMiddleware())
     dp.message.outer_middleware(FsmResetMiddleware())
+    # dp.message.outer_middleware(DailyBonusMiddleware())
     
     await set_bot_commands(bot)
     print("✅ Bot ishga tushdi!")
@@ -2138,8 +3217,11 @@ async def main():
     # Background tasklar ishga tushiramiz
     asyncio.create_task(check_and_send_reminders())  # Feature 2: Dori eslatmalari
     asyncio.create_task(daily_tips_scheduler())       # Feature 7: Kunlik maslahatlar
+    asyncio.create_task(morning_greeting_scheduler()) # Ertalabki salom (08:30)
+    asyncio.create_task(daily_disease_info_scheduler()) # Kasallik ma'lumoti (10:30)
 
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
